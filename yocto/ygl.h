@@ -262,11 +262,16 @@
 #include <cstring>
 #include <functional>  // for std::hash
 #include <limits>
+#include <memory>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#if YGL_EMBREE
+#include <embree3/rtcore.h>
+#endif
 
 // -----------------------------------------------------------------------------
 // MATH CONSTANTS AND FUNCTIONS
@@ -1930,33 +1935,66 @@ struct bvh_tree {
     // data for instance BVH
     std::vector<frame3f> ist_frames;      // instance frames
     std::vector<frame3f> ist_inv_frames;  // instance inverse frames
-    std::vector<bvh_tree*> ist_bvhs;      // instance shape bvhs
+    std::vector<std::shared_ptr<bvh_tree>> ist_bvhs;      // instance shape bvhs
 
     // bvh nodes
     std::vector<bvh_node> nodes;  // Internal nodes.
 };
 
 // Build a BVH from the given set of primitives.
-void build_bvh(bvh_tree* bvh, bool sah);
+void build_bvh(const std::shared_ptr<bvh_tree>& bvh, bool sah);
 // Update the node bounds for a shape bvh.
-void refit_bvh(bvh_tree* bvh);
+void refit_bvh(const std::shared_ptr<bvh_tree>& bvh);
 
 // Intersect ray with a bvh returning either the first or any intersection
 // depending on `find_any`. Returns the ray distance `dist`, the instance
 // id `iid`, the shape id `sid`, the shape element index `eid` and the
 // shape barycentric coordinates `uv`.
-bool intersect_bvh(const bvh_tree* bvh, const ray3f& ray, bool find_any,
-    float& dist, int& iid, int& eid, vec2f& uv);
+bool intersect_bvh(const std::shared_ptr<bvh_tree>& bvh, const ray3f& ray,
+    bool find_any, float& dist, int& iid, int& eid, vec2f& uv);
 
 // Find a shape element that overlaps a point within a given distance
 // `max_dist`, returning either the closest or any overlap depending on
 // `find_any`. Returns the point distance `dist`, the instance id `iid`, the
 // shape id `sid`, the shape element index `eid` and the shape barycentric
 // coordinates `uv`.
-bool overlap_bvh(const bvh_tree* bvh, const vec3f& pos, float max_dist,
-    bool find_any, float& dist, int& iid, int& eid, vec2f& uv);
+bool overlap_bvh(const std::shared_ptr<bvh_tree>& bvh, const vec3f& pos,
+    float max_dist, bool find_any, float& dist, int& iid, int& eid, vec2f& uv);
 
 }  // namespace ygl
+
+// -----------------------------------------------------------------------------
+// WRAPPER FOR EMBREE BVH
+// -----------------------------------------------------------------------------
+namespace ygl {
+#if YGL_EMBREE
+
+    // Wrapper for Intel's embree bvh that matches the calls of yocto/bvh.
+    struct bvh_embree {
+        RTCDevice device = nullptr;
+        RTCScene scene = nullptr;
+        std::vector<RTCGeometry> shapes;
+        ~bvh_embree();
+    };
+    
+    // Initialize Embree bvh.
+    std::shared_ptr<bvh_embree> make_embree_bvh();
+    
+    // Add triangle mesh.
+    void add_triangle_mesh(const std::shared_ptr<bvh_embree>& bvh, int iid, const std::vector<vec3i>& triangles, const std::vector<vec3f>& pos);
+    
+    // Build BVH.
+    void build_bvh(const std::shared_ptr<bvh_embree>& bvh);
+
+    // Intersect ray with a bvh returning either the first or any intersection
+    // depending on `find_any`. Returns the ray distance `dist`, the instance
+    // id `iid`, the shape id `sid`, the shape element index `eid` and the
+    // shape barycentric coordinates `uv`.
+    bool intersect_bvh(const std::shared_ptr<bvh_embree>& bvh, const ray3f& ray,
+                       bool find_any, float& dist, int& iid, int& eid, vec2f& uv);
+    
+#endif
+}
 
 // -----------------------------------------------------------------------------
 // SHAPE EXAMPLES
@@ -2330,16 +2368,18 @@ struct material {
     bool refract = false;  // whether to use use refraction in tranmission
 
     // textures
-    texture* ke_txt = nullptr;    // emission texture
-    texture* kd_txt = nullptr;    // diffuse texture
-    texture* ks_txt = nullptr;    // specular texture
-    texture* kt_txt = nullptr;    // transmission texture
-    texture* rs_txt = nullptr;    // roughness texture
-    texture* op_txt = nullptr;    // opacity texture
-    texture* occ_txt = nullptr;   // occlusion texture
-    texture* bump_txt = nullptr;  // bump map texture (heighfield)
-    texture* disp_txt = nullptr;  // displacement map texture (heighfield)
-    texture* norm_txt = nullptr;  // normal texture
+    std::shared_ptr<texture> ke_txt = nullptr;   // emission texture
+    std::shared_ptr<texture> kd_txt = nullptr;   // diffuse texture
+    std::shared_ptr<texture> ks_txt = nullptr;   // specular texture
+    std::shared_ptr<texture> kt_txt = nullptr;   // transmission texture
+    std::shared_ptr<texture> rs_txt = nullptr;   // roughness texture
+    std::shared_ptr<texture> op_txt = nullptr;   // opacity texture
+    std::shared_ptr<texture> occ_txt = nullptr;  // occlusion texture
+    std::shared_ptr<texture> bump_txt =
+        nullptr;  // bump map texture (heighfield)
+    std::shared_ptr<texture> disp_txt =
+        nullptr;  // displacement map texture (heighfield)
+    std::shared_ptr<texture> norm_txt = nullptr;  // normal texture
 };
 
 // Shape data represented as an indexed meshes of elements.
@@ -2362,15 +2402,11 @@ struct shape {
     std::vector<vec4f> tangsp;    // tangent space for triangles
 
     // computed properties
-    std::vector<float> elem_cdf = {};  // element cdf for sampling
-    bvh_tree* bvh = nullptr;           // bvh for ray intersection
+    std::vector<float> elem_cdf = {};         // element cdf for sampling
+    std::shared_ptr<bvh_tree> bvh = nullptr;  // bvh for ray intersection
     uint gl_pos = 0, gl_norm = 0, gl_texcoord = 0, gl_color = 0, gl_tangsp = 0,
          gl_points = 0, gl_lines = 0,
-         gl_triangles = 0;       // unmanaged data for OpenGL viewer
-    void* embree_bvh = nullptr;  // unmanaged data for Embree raytracer
-
-    // cleanup
-    ~shape();
+         gl_triangles = 0;  // unmanaged data for OpenGL viewer
 };
 
 // Subdivision surface.
@@ -2398,19 +2434,19 @@ struct subdiv {
 
 // Shape instance.
 struct instance {
-    std::string name;                  // name
-    frame3f frame = identity_frame3f;  // transform frame
-    shape* shp = nullptr;              // shape
-    material* mat = nullptr;           // material
-    subdiv* sbd = nullptr;             // subdivision shape
+    std::string name;                         // name
+    frame3f frame = identity_frame3f;         // transform frame
+    std::shared_ptr<shape> shp = nullptr;     // shape
+    std::shared_ptr<material> mat = nullptr;  // material
+    std::shared_ptr<subdiv> sbd = nullptr;    // subdivision shape
 };
 
 // Envinonment map.
 struct environment {
-    std::string name = "";             // name
-    frame3f frame = identity_frame3f;  // transform frame
-    vec3f ke = {0, 0, 0};              // emission color
-    texture* ke_txt = nullptr;         // emission texture
+    std::string name = "";                      // name
+    frame3f frame = identity_frame3f;           // transform frame
+    vec3f ke = {0, 0, 0};                       // emission color
+    std::shared_ptr<texture> ke_txt = nullptr;  // emission texture
 
     // computed properties
     std::vector<float> elem_cdf;  // element cdf for sampling
@@ -2418,19 +2454,19 @@ struct environment {
 
 // Node in a transform hierarchy.
 struct node {
-    std::string name = "";             // name
-    node* parent = nullptr;            // parent
-    frame3f local = identity_frame3f;  // transform frame
-    vec3f translation = {0, 0, 0};     // translation
-    vec4f rotation = {0, 0, 0, 1};     // rotation
-    vec3f scale = {1, 1, 1};           // scale
-    std::vector<float> weights = {};   // morph weights
-    camera* cam = nullptr;             // camera
-    instance* ist = nullptr;           // instance
-    environment* env = nullptr;        // environment
+    std::string name = "";                       // name
+    std::shared_ptr<node> parent = nullptr;      // parent
+    frame3f local = identity_frame3f;            // transform frame
+    vec3f translation = {0, 0, 0};               // translation
+    vec4f rotation = {0, 0, 0, 1};               // rotation
+    vec3f scale = {1, 1, 1};                     // scale
+    std::vector<float> weights = {};             // morph weights
+    std::shared_ptr<camera> cam = nullptr;       // camera
+    std::shared_ptr<instance> ist = nullptr;     // instance
+    std::shared_ptr<environment> env = nullptr;  // environment
 
     // compute properties
-    std::vector<node*> children = {};  // child nodes
+    std::vector<std::weak_ptr<node>> children = {};  // child nodes
 };
 
 // Keyframe type.
@@ -2447,7 +2483,7 @@ struct animation {
     std::vector<vec4f> rotation;                   // rotation keyframes
     std::vector<vec3f> scale;                      // scale keyframes
     std::vector<std::vector<float>> weights;       // mprph weight keyframes
-    std::vector<node*> targets;                    // target nodes
+    std::vector<std::shared_ptr<node>> targets;                    // target nodes
 };
 
 // Scene comprised an array of objects whose memory is owened by the scene.
@@ -2459,25 +2495,21 @@ struct animation {
 // updates node transformations only if defined.
 struct scene {
     std::string name;                             // name
-    std::vector<camera*> cameras = {};            // cameras
-    std::vector<shape*> shapes = {};              // shapes
-    std::vector<subdiv*> subdivs = {};            // subdivs
-    std::vector<instance*> instances = {};        // instances
-    std::vector<material*> materials = {};        // materials
-    std::vector<texture*> textures = {};          // textures
-    std::vector<environment*> environments = {};  // environments
+    std::vector<std::shared_ptr<camera>> cameras = {};            // cameras
+    std::vector<std::shared_ptr<shape>> shapes = {};              // shapes
+    std::vector<std::shared_ptr<subdiv>> subdivs = {};            // subdivs
+    std::vector<std::shared_ptr<instance>> instances = {};        // instances
+    std::vector<std::shared_ptr<material>> materials = {};        // materials
+    std::vector<std::shared_ptr<texture>> textures = {};          // textures
+    std::vector<std::shared_ptr<environment>> environments = {};  // environments
 
-    std::vector<node*> nodes = {};            // node hierarchy [optional]
-    std::vector<animation*> animations = {};  // animations [optional]
+    std::vector<std::shared_ptr<node>> nodes = {};            // node hierarchy [optional]
+    std::vector<std::shared_ptr<animation>> animations = {};  // animations [optional]
 
     // compute properties
-    std::vector<instance*> lights;
-    bvh_tree* bvh = nullptr;
-    void* embree_bvh = nullptr;     // unmanaged data for Embree raytracer
-    void* embree_device = nullptr;  // unmanaged data for Embree raytracer
-
-    // cleanup
-    ~scene();
+    std::vector<std::shared_ptr<instance>> lights;
+    std::shared_ptr<bvh_tree> bvh = nullptr;
+    std::shared_ptr<bvh_embree> embree_bvh = nullptr;
 };
 
 }  // namespace ygl
@@ -2488,11 +2520,12 @@ struct scene {
 namespace ygl {
 
 // Print scene statistics.
-void print_stats(const scene* scn);
+void print_stats(const std::shared_ptr<scene>& scn);
 
 // Merge scene into one another. Note that the objects are _moved_ from
 // merge_from to merged_into, so merge_from will be empty after this function.
-void merge_into(const scene* merge_into, scene* merge_from);
+void merge_into(const std::shared_ptr<scene>& merge_into,
+    const std::shared_ptr<scene>& merge_from);
 
 }  // namespace ygl
 
@@ -2502,67 +2535,71 @@ void merge_into(const scene* merge_into, scene* merge_from);
 namespace ygl {
 
 // Update node transforms.
-void update_transforms(
-    scene* scn, float time = 0, const std::string& anim_group = "");
+void update_transforms(const std::shared_ptr<scene>& scn, float time = 0,
+    const std::string& anim_group = "");
 // Compute animation range.
 vec2f compute_animation_range(
-    const scene* scn, const std::string& anim_group = "");
+    const std::shared_ptr<scene>& scn, const std::string& anim_group = "");
 
 // Computes shape/scene approximate bounds.
-bbox3f compute_bbox(const shape* shp);
-bbox3f compute_bbox(const scene* scn);
+bbox3f compute_bbox(const std::shared_ptr<shape>& shp);
+bbox3f compute_bbox(const std::shared_ptr<scene>& scn);
 
 // Update lights.
-void init_lights(
-    scene* scn, bool do_shapes = true, bool do_environments = false);
+void init_lights(const std::shared_ptr<scene>& scn, bool do_shapes = true,
+    bool do_environments = false);
 // Generate a distribution for sampling a shape uniformly based on area/length.
-void update_shape_cdf(shape* shp);
+void update_shape_cdf(const std::shared_ptr<shape>& shp);
 // Generate a distribution for sampling an environment texture uniformly
 // based on angle and texture intensity.
-void update_environment_cdf(environment* env);
+void update_environment_cdf(const std::shared_ptr<environment>& env);
 
 // Updates/refits bvh.
-void build_bvh(shape* shp, bool sah = true);
-void build_bvh(scene* scn, bool sah = true);
-void refit_bvh(shape* shp);
-void refit_bvh(scene* scn);
+void build_bvh(const std::shared_ptr<shape>& shp, bool sah = true);
+void build_bvh(const std::shared_ptr<scene>& scn, bool sah = true);
+void refit_bvh(const std::shared_ptr<shape>& shp);
+void refit_bvh(const std::shared_ptr<scene>& scn);
 
 #if YGL_EMBREE
 // Build/update Embree BVH
-void build_bvh_embree(scene* scn);
+void build_bvh_embree(const std::shared_ptr<scene>& scn);
 #endif
 
 // Updates tesselation.
-void tesselate_subdiv(const subdiv* sbd, shape* shp);
-void tesselate_subdivs(scene* scn);
+void tesselate_subdiv(
+    const std::shared_ptr<subdiv>& sbd, const std::shared_ptr<shape>& shp);
+void tesselate_subdivs(const std::shared_ptr<scene>& scn);
 
 // Add missing names, normals, tangents and hierarchy.
-void add_missing_names(scene* scn);
-void add_missing_normals(scene* scn);
-void add_missing_tangent_space(scene* scn);
-void add_missing_materials(scene* scn);
+void add_missing_names(const std::shared_ptr<scene>& scn);
+void add_missing_normals(const std::shared_ptr<scene>& scn);
+void add_missing_tangent_space(const std::shared_ptr<scene>& scn);
+void add_missing_materials(const std::shared_ptr<scene>& scn);
 // Checks for validity of the scene.
-std::vector<std::string> validate(const scene* scn, bool skip_textures = false);
+std::vector<std::string> validate(
+    const std::shared_ptr<scene>& scn, bool skip_textures = false);
 
 // make camera
-camera* make_bbox_camera(const std::string& name, const bbox3f& bbox,
-    float width = 0.036f, float height = 0.024f, float focal = 0.050f);
+std::shared_ptr<camera> make_bbox_camera(const std::string& name,
+    const bbox3f& bbox, float width = 0.036f, float height = 0.024f,
+    float focal = 0.050f);
 // make default material
-inline material* make_default_material(const std::string& name) {
-    auto mat = new material();
+inline std::shared_ptr<material> make_default_material(
+    const std::string& name) {
+    auto mat = std::make_shared<material>();
     mat->name = name;
     mat->kd = {0.2f, 0.2f, 0.2f};
     return mat;
 }
 
 // Add a sky environment
-inline environment* make_sky_environment(
+inline std::shared_ptr<environment> make_sky_environment(
     const std::string& name, float sun_angle = pi / 4) {
-    auto txt = new texture();
+    auto txt = std::make_shared<texture>();
     txt->name = name;
     txt->path = "textures/" + name + ".hdr";
     txt->img = make_sunsky_image(1024, 512, sun_angle);
-    auto env = new environment();
+    auto env = std::make_shared<environment>();
     env->name = name;
     env->ke = {1, 1, 1};
     env->ke_txt = txt;
@@ -2578,78 +2615,89 @@ namespace ygl {
 
 // Scene intersection.
 struct scene_intersection {
-    instance* ist = nullptr;  // instance or null for no intersection
-    int ei = 0;               // shape element index
-    vec2f uv = zero2f;        // shape element coordinates
-    float dist = 0;           // ray/point distance
+    std::shared_ptr<instance> ist =
+        nullptr;        // instance or null for no intersection
+    int ei = 0;         // shape element index
+    vec2f uv = zero2f;  // shape element coordinates
+    float dist = 0;     // ray/point distance
 };
 
 // Intersects a ray with the scene.
 scene_intersection intersect_ray(
-    const scene* scn, const ray3f& ray, bool find_any = false);
+    const std::shared_ptr<scene>& scn, const ray3f& ray, bool find_any = false);
 
 // Shape values interpolated using barycentric coordinates.
-vec3f eval_pos(const shape* shp, int ei, const vec2f& uv);
-vec3f eval_norm(const shape* shp, int ei, const vec2f& uv);
-vec2f eval_texcoord(const shape* shp, int ei, const vec2f& uv);
-vec4f eval_color(const shape* shp, int ei, const vec2f& uv);
-float eval_radius(const shape* shp, int ei, const vec2f& uv);
-vec4f eval_tangsp(const shape* shp, int ei, const vec2f& uv);
-vec3f eval_tangsp(const shape* shp, int ei, const vec2f& uv, bool& left_handed);
+vec3f eval_pos(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv);
+vec3f eval_norm(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv);
+vec2f eval_texcoord(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv);
+vec4f eval_color(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv);
+float eval_radius(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv);
+vec4f eval_tangsp(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv);
+vec3f eval_tangsp(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv,
+    bool& left_handed);
 // Shape element values.
-vec3f eval_elem_norm(const shape* shp, int ei);
-vec4f eval_elem_tangsp(const shape* shp, int ei);
+vec3f eval_elem_norm(const std::shared_ptr<shape>& shp, int ei);
+vec4f eval_elem_tangsp(const std::shared_ptr<shape>& shp, int ei);
 
 // Instance values interpolated using barycentric coordinates.
 // Handles defaults if data is missing.
-vec3f eval_pos(const instance* ist, int ei, const vec2f& uv);
-vec3f eval_norm(const instance* ist, int ei, const vec2f& uv);
-vec2f eval_texcoord(const instance* ist, int ei, const vec2f& uv);
-vec4f eval_color(const instance* ist, int ei, const vec2f& uv);
-float eval_radius(const instance* ist, int ei, const vec2f& uv);
-vec3f eval_tangsp(
-    const instance* ist, int ei, const vec2f& uv, bool& left_handed);
+vec3f eval_pos(const std::shared_ptr<instance>& ist, int ei, const vec2f& uv);
+vec3f eval_norm(const std::shared_ptr<instance>& ist, int ei, const vec2f& uv);
+vec2f eval_texcoord(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv);
+vec4f eval_color(const std::shared_ptr<instance>& ist, int ei, const vec2f& uv);
+float eval_radius(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv);
+vec3f eval_tangsp(const std::shared_ptr<instance>& ist, int ei, const vec2f& uv,
+    bool& left_handed);
 // Instance element values.
-vec3f eval_elem_norm(const instance* ist, int ei);
+vec3f eval_elem_norm(const std::shared_ptr<instance>& ist, int ei);
 // Shading normals including material perturbations.
-vec3f eval_shading_norm(
-    const instance* ist, int ei, const vec2f& uv, const vec3f& o);
+vec3f eval_shading_norm(const std::shared_ptr<instance>& ist, int ei,
+    const vec2f& uv, const vec3f& o);
 
 // Environment texture coordinates from the incoming direction.
-vec2f eval_texcoord(const environment* env, const vec3f& i);
+vec2f eval_texcoord(const std::shared_ptr<environment>& env, const vec3f& i);
 // Evaluate the incoming direction from the uv.
-vec3f eval_direction(const environment* env, const vec2f& uv);
+vec3f eval_direction(const std::shared_ptr<environment>& env, const vec2f& uv);
 // Evaluate the environment emission.
-vec3f eval_environment(const environment* env, const vec3f& i);
+vec3f eval_environment(const std::shared_ptr<environment>& env, const vec3f& i);
 
 // Evaluate a texture.
-vec4f eval_texture(const texture* txt, const vec2f& texcoord);
+vec4f eval_texture(const std::shared_ptr<texture>& txt, const vec2f& texcoord);
 
 // Set and evaluate camera parameters. Setters take zeros as default values.
-float eval_camera_fovy(const camera* cam);
-float eval_camera_aspect(const camera* cam);
-void set_camera_fovy(
-    camera* cam, float fovy, float aspect, float width = 0.036f);
-int image_width(const camera* cam, int yresolution);
-int image_height(const camera* cam, int yresolution);
+float eval_camera_fovy(const std::shared_ptr<camera>& cam);
+float eval_camera_aspect(const std::shared_ptr<camera>& cam);
+void set_camera_fovy(const std::shared_ptr<camera>& cam, float fovy,
+    float aspect, float width = 0.036f);
+int image_width(const std::shared_ptr<camera>& cam, int yresolution);
+int image_height(const std::shared_ptr<camera>& cam, int yresolution);
 
 // Generates a ray from a camera image coordinate `uv` and lens coordinates
 // `luv`.
-ray3f eval_camera_ray(const camera* cam, const vec2f& uv, const vec2f& luv);
+ray3f eval_camera_ray(
+    const std::shared_ptr<camera>& cam, const vec2f& uv, const vec2f& luv);
 // Generates a ray from a camera for pixel coordinates `ij`, the resolution
 // `res`, the sub-pixel coordinates `puv` and the lens coordinates `luv` and
 // the image resolution `res`.
-ray3f eval_camera_ray(const camera* cam, int i, int j, int w, int h,
-    const vec2f& puv, const vec2f& luv);
+ray3f eval_camera_ray(const std::shared_ptr<camera>& cam, int i, int j, int w,
+    int h, const vec2f& puv, const vec2f& luv);
 
 // Evaluates material parameters: emission, diffuse, specular, transmission,
 // roughness and opacity.
-vec3f eval_emission(const instance* ist, int ei, const vec2f& uv);
-vec3f eval_diffuse(const instance* ist, int ei, const vec2f& uv);
-vec3f eval_specular(const instance* ist, int ei, const vec2f& uv);
-vec3f eval_transmission(const instance* ist, int ei, const vec2f& uv);
-float eval_roughness(const instance* ist, int ei, const vec2f& uv);
-float eval_opacity(const instance* ist, int ei, const vec2f& uv);
+vec3f eval_emission(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv);
+vec3f eval_diffuse(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv);
+vec3f eval_specular(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv);
+vec3f eval_transmission(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv);
+float eval_roughness(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv);
+float eval_opacity(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv);
 
 // Material values packed into a convenience structure.
 struct bsdf {
@@ -2659,15 +2707,16 @@ struct bsdf {
     float rs = 1;          // roughness
     bool refract = false;  // whether to use refraction in transmission
 };
-bsdf eval_bsdf(const instance* ist, int ei, const vec2f& uv);
+bsdf eval_bsdf(const std::shared_ptr<instance>& ist, int ei, const vec2f& uv);
 bool is_delta_bsdf(const bsdf& f);
 
 // Sample a shape based on a distribution.
 std::pair<int, vec2f> sample_shape(
-    const shape* shp, float re, const vec2f& ruv);
+    const std::shared_ptr<shape>& shp, float re, const vec2f& ruv);
 
 // Sample an environment uniformly.
-vec2f sample_environment(const environment* env, const vec2f& ruv);
+vec2f sample_environment(
+    const std::shared_ptr<environment>& env, const vec2f& ruv);
 
 }  // namespace ygl
 
@@ -2680,12 +2729,13 @@ namespace ygl {
 const auto trace_default_seed = 961748941;
 
 // Trace evaluation function.
-using trace_func = std::function<vec3f(const scene* scn, const ray3f& ray,
-    rng_state& rng, int nbounces, bool* hit)>;
+using trace_func = std::function<vec3f(const std::shared_ptr<scene>& scn,
+    const ray3f& ray, rng_state& rng, int nbounces, bool* hit)>;
 
 // Progressively compute an image by calling trace_samples multiple times.
-image4f trace_image(const scene* scn, const camera* cam, int yresolution,
-    int nsamples, trace_func tracer, int nbounces = 8, float pixel_clamp = 100,
+image4f trace_image(const std::shared_ptr<scene>& scn,
+    const std::shared_ptr<camera>& cam, int yresolution, int nsamples,
+    trace_func tracer, int nbounces = 8, float pixel_clamp = 100,
     bool noparallel = false, int seed = trace_default_seed);
 
 // Initialize trace rngs
@@ -2695,63 +2745,64 @@ std::vector<rng_state> make_trace_rngs(
 // Progressively compute an image by calling trace_samples multiple times.
 // Start with an empty state and then successively call this function to
 // render the next batch of samples.
-void trace_samples(const scene* scn, const camera* cam, int nsamples,
-    trace_func tracer, image4f& img, std::vector<rng_state>& rngs, int sample,
-    int nbounces = 8, float pixel_clamp = 100, bool noparallel = false,
+void trace_samples(const std::shared_ptr<scene>& scn,
+    const std::shared_ptr<camera>& cam, int nsamples, trace_func tracer,
+    image4f& img, std::vector<rng_state>& rngs, int sample, int nbounces = 8,
+    float pixel_clamp = 100, bool noparallel = false,
     int seed = trace_default_seed);
 
 // Starts an anyncrhounous renderer.
-void trace_async_start(const scene* scn, const camera* cam, int nsamples,
-    trace_func tracer, image4f& img, image4f& display,
-    std::vector<rng_state>& rngs, std::vector<std::thread>& threads, bool& stop,
-    int& sample, float& exposure, float& gamma, bool& filmic,
-    int preview_ratio = 8, int nbounces = 8, float pixel_clamp = 100,
-    int seed = trace_default_seed);
+void trace_async_start(const std::shared_ptr<scene>& scn,
+    const std::shared_ptr<camera>& cam, int nsamples, trace_func tracer,
+    image4f& img, image4f& display, std::vector<rng_state>& rngs,
+    std::vector<std::thread>& threads, bool& stop, int& sample, float& exposure,
+    float& gamma, bool& filmic, int preview_ratio = 8, int nbounces = 8,
+    float pixel_clamp = 100, int seed = trace_default_seed);
 // Stop the asynchronous renderer.
 void trace_async_stop(std::vector<std::thread>& threads, bool& stop);
 
 // Trace function - path tracer.
-vec3f trace_path(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
-// Trace function - path tracer without mis.
-vec3f trace_path_nomis(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
-// Trace function - naive path tracer.
-vec3f trace_path_naive(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
-// Trace function - direct illumination.
-vec3f trace_direct(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
-// Trace function - direct illumination without mis.
-vec3f trace_direct_nomis(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
-// Trace function - pure environment illumination with no shadows.
-vec3f trace_environment(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
-// Trace function - eyelight rendering.
-vec3f trace_eyelight(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
-// Trace function - normal debug visualization.
-vec3f trace_debug_normal(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
-// Trace function - faceforward debug visualization.
-vec3f trace_debug_frontfacing(const scene* scn, const ray3f& ray,
+vec3f trace_path(const std::shared_ptr<scene>& scn, const ray3f& ray,
     rng_state& rng, int nbounces, bool* hit = nullptr);
+// Trace function - path tracer without mis.
+vec3f trace_path_nomis(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit = nullptr);
+// Trace function - naive path tracer.
+vec3f trace_path_naive(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit = nullptr);
+// Trace function - direct illumination.
+vec3f trace_direct(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit = nullptr);
+// Trace function - direct illumination without mis.
+vec3f trace_direct_nomis(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit = nullptr);
+// Trace function - pure environment illumination with no shadows.
+vec3f trace_environment(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit = nullptr);
+// Trace function - eyelight rendering.
+vec3f trace_eyelight(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit = nullptr);
+// Trace function - normal debug visualization.
+vec3f trace_debug_normal(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit = nullptr);
+// Trace function - faceforward debug visualization.
+vec3f trace_debug_frontfacing(const std::shared_ptr<scene>& scn,
+    const ray3f& ray, rng_state& rng, int nbounces, bool* hit = nullptr);
 // Trace function - albedo debug visualization.
-vec3f trace_debug_albedo(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
+vec3f trace_debug_albedo(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit = nullptr);
 // Trace function - diffuse debug visualization.
-vec3f trace_debug_diffuse(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
+vec3f trace_debug_diffuse(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit = nullptr);
 // Trace function - specular debug visualization.
-vec3f trace_debug_specular(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
+vec3f trace_debug_specular(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit = nullptr);
 // Trace function - roughness debug visualization.
-vec3f trace_debug_roughness(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
+vec3f trace_debug_roughness(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit = nullptr);
 // Trace function - texcoord debug visualization.
-vec3f trace_debug_texcoord(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit = nullptr);
+vec3f trace_debug_texcoord(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit = nullptr);
 
 // Trace statistics for last run used for fine tuning implementation.
 // For now returns number of paths and number of rays.

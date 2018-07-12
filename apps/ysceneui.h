@@ -65,12 +65,12 @@ inline const std::map<ygl::animation_type, std::string>& animation_type_names() 
 }
 
 template <typename T>
-inline void draw_scene_tree_glwidgets_rec(const std::string& lbl_, T* val,
-    void*& sel) {}
+inline void draw_scene_tree_glwidgets_rec(const std::string& lbl_, const std::shared_ptr<T>& val,
+    std::shared_ptr<void>& sel) {}
 
 template <typename T>
-inline void draw_glwidgets_scene_tree(const std::string& lbl_, T* val,
-    void*& sel) {
+inline void draw_glwidgets_scene_tree(const std::string& lbl_, const std::shared_ptr<T>& val,
+    std::shared_ptr<void>& sel) {
     if (!val) return;
     auto lbl = val->name;
     if (!lbl_.empty()) lbl = lbl_ + ": " + val->name;
@@ -82,7 +82,7 @@ inline void draw_glwidgets_scene_tree(const std::string& lbl_, T* val,
 
 template <>
 inline void draw_scene_tree_glwidgets_rec<ygl::instance>(const std::string& lbl_,
-    ygl::instance* val, void*& sel) {
+    const std::shared_ptr<ygl::instance>& val, std::shared_ptr<void>& sel) {
     draw_glwidgets_scene_tree("shp", val->shp, sel);
     draw_glwidgets_scene_tree("sbd", val->sbd, sel);
     draw_glwidgets_scene_tree("mat", val->mat, sel);
@@ -90,7 +90,7 @@ inline void draw_scene_tree_glwidgets_rec<ygl::instance>(const std::string& lbl_
 
 template <>
 inline void draw_scene_tree_glwidgets_rec<ygl::material>(const std::string& lbl_,
-    ygl::material* val, void*& sel) {
+    const std::shared_ptr<ygl::material>& val, std::shared_ptr<void>& sel) {
     draw_glwidgets_scene_tree("ke", val->ke_txt, sel);
     draw_glwidgets_scene_tree("kd", val->kd_txt, sel);
     draw_glwidgets_scene_tree("ks", val->ks_txt, sel);
@@ -100,25 +100,24 @@ inline void draw_scene_tree_glwidgets_rec<ygl::material>(const std::string& lbl_
 }
 template <>
 inline void draw_scene_tree_glwidgets_rec<ygl::environment>(const std::string& lbl_,
-    ygl::environment* val, void*& sel) {
+    const std::shared_ptr<ygl::environment>& val, std::shared_ptr<void>& sel) {
     draw_glwidgets_scene_tree("ke", val->ke_txt, sel);
 }
 template <>
 inline void draw_scene_tree_glwidgets_rec<ygl::node>(const std::string& lbl_,
-    ygl::node* val, void*& sel) {
+    const std::shared_ptr<ygl::node>& val, std::shared_ptr<void>& sel) {
     draw_glwidgets_scene_tree("ist", val->ist, sel);
     draw_glwidgets_scene_tree("cam", val->cam, sel);
     draw_glwidgets_scene_tree("env", val->env, sel);
     draw_glwidgets_scene_tree("par", val->parent, sel);
     auto cid = 0;
     for (auto ch : val->children) {
-        draw_glwidgets_scene_tree(
-            "ch" + std::to_string(cid++), ch, sel);
+        draw_glwidgets_scene_tree("ch" + std::to_string(cid++), ch.lock(), sel);
     }
 }
 template <>
 inline void draw_scene_tree_glwidgets_rec<ygl::animation>(const std::string& lbl_,
-    ygl::animation* val, void*& sel) {
+    const std::shared_ptr<ygl::animation>& val, std::shared_ptr<void>& sel) {
     auto tid = 0;
     for (auto tg : val->targets) {
         draw_glwidgets_scene_tree(
@@ -126,7 +125,7 @@ inline void draw_scene_tree_glwidgets_rec<ygl::animation>(const std::string& lbl
     }
 }
 
-inline void draw_glwidgets_scene_tree(ygl::scene* scn, void*& sel) {
+inline void draw_glwidgets_scene_tree(const std::shared_ptr<ygl::scene>& scn, std::shared_ptr<void>& sel) {
     if (!scn->cameras.empty() && ImGui::TreeNode("cameras")) {
         for (auto v : scn->cameras)
             draw_glwidgets_scene_tree("", v, sel);
@@ -175,7 +174,7 @@ inline void draw_glwidgets_scene_tree(ygl::scene* scn, void*& sel) {
 }
 
 /// Visit struct elements.
-inline bool draw_glwidgets_scene_inspector(ygl::camera* val, ygl::scene* scn) {
+inline bool draw_glwidgets_scene_inspector(const std::shared_ptr<ygl::camera>& val, const std::shared_ptr<ygl::scene>& scn) {
     auto edited = 0;
     edited += ImGui::InputText("name", &val->name);
     edited += ImGui::SliderFloat3("frame.x", &val->frame.x.x, -1, 1);
@@ -194,7 +193,7 @@ inline bool draw_glwidgets_scene_inspector(ygl::camera* val, ygl::scene* scn) {
 }
 
 /// Visit struct elements.
-inline bool draw_glwidgets_scene_inspector(ygl::texture* val, ygl::scene* scn) {
+inline bool draw_glwidgets_scene_inspector(const std::shared_ptr<ygl::texture>& val, const std::shared_ptr<ygl::scene>& scn) {
     auto edited = 0;
     edited += ImGui::InputText("name", &val->name);
     edited += ImGui::InputText("path", &val->path);
@@ -205,7 +204,7 @@ inline bool draw_glwidgets_scene_inspector(ygl::texture* val, ygl::scene* scn) {
     return edited;
 }
 
-inline bool draw_glwidgets_scene_inspector(ygl::material* val, ygl::scene* scn) {
+inline bool draw_glwidgets_scene_inspector(const std::shared_ptr<ygl::material>& val, const std::shared_ptr<ygl::scene>& scn) {
     auto edited = 0;
     edited += ImGui::InputText("name", &val->name);
     edited += ImGui::ColorEdit3("ke", &val->ke.x);  // TODO: HDR
@@ -231,7 +230,7 @@ inline bool draw_glwidgets_scene_inspector(ygl::material* val, ygl::scene* scn) 
     return edited;
 }
 
-inline bool draw_glwidgets_scene_inspector(ygl::shape* val, ygl::scene* scn) {
+inline bool draw_glwidgets_scene_inspector(const std::shared_ptr<ygl::shape>& val, const std::shared_ptr<ygl::scene>& scn) {
     auto edited = 0;
     edited += ImGui::InputText("name", &val->name);
     edited += ImGui::InputText("path", &val->path);
@@ -246,7 +245,7 @@ inline bool draw_glwidgets_scene_inspector(ygl::shape* val, ygl::scene* scn) {
     return edited;
 }
 
-inline bool draw_glwidgets_scene_inspector(ygl::subdiv* val, ygl::scene* scn) {
+inline bool draw_glwidgets_scene_inspector(const std::shared_ptr<ygl::subdiv>& val, const std::shared_ptr<ygl::scene>& scn) {
     auto edited = 0;
     edited += ImGui::InputText("name", &val->name);
     edited += ImGui::SliderInt("level", &val->level, 0, 10);
@@ -262,7 +261,7 @@ inline bool draw_glwidgets_scene_inspector(ygl::subdiv* val, ygl::scene* scn) {
     return edited;
 }
 
-inline bool draw_glwidgets_scene_inspector(ygl::instance* val, ygl::scene* scn) {
+inline bool draw_glwidgets_scene_inspector(const std::shared_ptr<ygl::instance>& val, const std::shared_ptr<ygl::scene>& scn) {
     auto edited = 0;
     edited += ImGui::InputText("name", &val->name);
     edited += ImGui::SliderFloat3("frame.x", &val->frame.x.x, -1, 1);
@@ -275,7 +274,7 @@ inline bool draw_glwidgets_scene_inspector(ygl::instance* val, ygl::scene* scn) 
     return edited;
 }
 
-inline bool draw_glwidgets_scene_inspector(ygl::environment* val, ygl::scene* scn) {
+inline bool draw_glwidgets_scene_inspector(const std::shared_ptr<ygl::environment>& val, const std::shared_ptr<ygl::scene>& scn) {
     auto edited = 0;
     edited += ImGui::InputText("name", &val->name);
     edited += ImGui::SliderFloat3("frame.x", &val->frame.x.x, -1, 1);
@@ -287,7 +286,7 @@ inline bool draw_glwidgets_scene_inspector(ygl::environment* val, ygl::scene* sc
     return edited;
 }
 
-inline bool draw_glwidgets_scene_inspector(ygl::node* val, ygl::scene* scn) {
+inline bool draw_glwidgets_scene_inspector(const std::shared_ptr<ygl::node>& val, const std::shared_ptr<ygl::scene>& scn) {
     auto edited = 0;
     edited += ImGui::InputText("name", &val->name);
     edited += ImGui::Combo("parent", &val->parent, scn->nodes, true);
@@ -304,7 +303,7 @@ inline bool draw_glwidgets_scene_inspector(ygl::node* val, ygl::scene* scn) {
     return edited;
 }
 
-inline bool draw_glwidgets_scene_inspector(ygl::animation* val, ygl::scene* scn) {
+inline bool draw_glwidgets_scene_inspector(const std::shared_ptr<ygl::animation>& val, const std::shared_ptr<ygl::scene>& scn) {
     auto edited = 0;
     edited += ImGui::InputText("name", &val->name);
     edited += ImGui::InputText("path", &val->path);
@@ -319,11 +318,11 @@ inline bool draw_glwidgets_scene_inspector(ygl::animation* val, ygl::scene* scn)
     return edited;
 }
 
-inline bool draw_glwidgets_scene_tree(const std::string& lbl, ygl::scene* scn,
-    void*& sel, std::vector<std::pair<std::string, void*>>& update_list,
+inline bool draw_glwidgets_scene_tree(const std::string& lbl, const std::shared_ptr<ygl::scene>& scn,
+                                      std::shared_ptr<void>& sel, std::vector<std::pair<std::string, std::shared_ptr<void>>>& update_list,
     int height) {
     if (!scn) return false;
-    ImGui::PushID(scn);
+    ImGui::PushID(scn.get());
     ImGui::BeginChild("scrolling scene tree", ImVec2(0, height), false);
     draw_glwidgets_scene_tree(scn, sel);
 
@@ -354,11 +353,11 @@ inline bool draw_glwidgets_scene_tree(const std::string& lbl, ygl::scene* scn,
     return update_list.size() != update_len;
 }
 
-inline bool draw_glwidgets_scene_inspector(const std::string& lbl, ygl::scene* scn,
-    void*& sel, std::vector<std::pair<std::string, void*>>& update_list,
+inline bool draw_glwidgets_scene_inspector(const std::string& lbl, const std::shared_ptr<ygl::scene>& scn,
+                                           std::shared_ptr<void>& sel, std::vector<std::pair<std::string, std::shared_ptr<void>>>& update_list,
     int height) {
     if (!scn || !sel) return false;
-    ImGui::PushID(sel);
+    ImGui::PushID(sel.get());
     ImGui::BeginChild("scrolling scene inspector", ImVec2(0, height), false);
 
     auto update_len = update_list.size();

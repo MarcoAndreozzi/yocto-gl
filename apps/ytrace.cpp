@@ -81,7 +81,7 @@ int main(int argc, char* argv[]) {
     ygl::check_cmdline(parser);
 
     // scene loading
-    auto scn = (ygl::scene*)nullptr;
+    auto scn = std::shared_ptr<ygl::scene>();
     printf("loading scene %s\n", filename.c_str());
     auto load_start = ygl::get_time();
     try {
@@ -153,9 +153,6 @@ int main(int argc, char* argv[]) {
     // save image
     printf("saving image %s\n", imfilename.c_str());
     ygl::save_ldr_or_hdr_image(filename, img, exposure, gamma, filmic);
-
-    // cleanup
-    delete scn;
 
     // done
     return 0;

@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
     ygl::check_cmdline(parser);
 
     // load scene
-    auto scn = (ygl::scene*)nullptr;
+    auto scn = std::shared_ptr<ygl::scene>();
     try {
         scn = ygl::load_scene(filename, !notextures);
     } catch (const std::exception& e) {

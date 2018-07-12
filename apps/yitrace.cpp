@@ -45,7 +45,7 @@
 // Application state
 struct app_state {
     // scene
-    ygl::scene* scn = nullptr;
+    std::shared_ptr<ygl::scene> scn = nullptr;
 
     // rendering params
     std::string filename = "scene.json";
@@ -78,15 +78,11 @@ struct app_state {
     unsigned int gl_txt = 0;
     unsigned int gl_prog = 0, gl_vbo = 0, gl_ebo;
     bool widgets_open = false;
-    void* selection = nullptr;
-    std::vector<std::pair<std::string, void*>> update_list;
+    std::shared_ptr<void> selection = nullptr;
+    std::vector<std::pair<std::string, std::shared_ptr<void>>> update_list;
     bool navigation_fps = false;
     bool quiet = false;
     int64_t trace_start = 0;
-
-    ~app_state() {
-        if (scn) delete scn;
-    }
 };
 
 auto tracer_names = std::vector<std::string>{"pathtrace", "direct",
@@ -129,7 +125,7 @@ void draw_widgets(GLFWwindow* win) {
             edited += ImGui::SliderInt("nbounces", &app->nbounces, 1, 10);
             edited += ImGui::SliderInt("seed", (int*)&app->seed, 0, 1000);
             edited += ImGui::SliderInt("pratio", &app->pratio, 1, 64);
-            if (edited) app->update_list.push_back({"app", app});
+            if (edited) app->update_list.push_back({"app", nullptr});
             ImGui::LabelText("time/sample", "%0.3lf",
                 (app->sample) ? (ygl::get_time() - app->trace_start) /
                                     (1000000000.0 * app->sample) :
@@ -197,7 +193,7 @@ bool update(app_state* app) {
     // update BVH
     for (auto& sel : app->update_list) {
         if (sel.first == "shape") {
-            ygl::refit_bvh((ygl::shape*)sel.second);
+            ygl::refit_bvh(std::static_pointer_cast<ygl::shape>(sel.second));
             ygl::refit_bvh(app->scn);
         }
         if (sel.first == "instance") { ygl::refit_bvh(app->scn); }

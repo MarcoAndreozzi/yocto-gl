@@ -41,7 +41,7 @@ struct app_state {
     // scene
     std::string filename = "scene.json";
     std::string imfilename = "out.obj";
-    ygl::scene* scn = nullptr;
+    std::shared_ptr<ygl::scene> scn = nullptr;
 
     // rendering params
     int camid = 0;         // camera id
@@ -63,10 +63,6 @@ struct app_state {
     float exposure = 0;
     float gamma = 2.2f;
     bool filmic = false;
-
-    ~app_state() {
-        if (scn) delete scn;
-    }
 };
 
 auto tracer_names = std::vector<std::string>{"pathtrace", "direct",

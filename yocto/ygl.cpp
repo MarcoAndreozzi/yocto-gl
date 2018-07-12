@@ -1486,7 +1486,7 @@ int make_bvh_node(std::vector<bvh_node>& nodes, std::vector<bvh_prim>& prims,
 }
 
 // Build a BVH from a set of primitives.
-void build_bvh(bvh_tree* bvh, bool sah) {
+void build_bvh(const std::shared_ptr<bvh_tree>& bvh, bool sah) {
     // get the number of primitives and the primitive type
     auto prims = std::vector<bvh_prim>();
     auto type = bvh_node_type::internal;
@@ -1540,7 +1540,7 @@ void build_bvh(bvh_tree* bvh, bool sah) {
 }
 
 // Recursively recomputes the node bounds for a shape bvh
-void refit_bvh(bvh_tree* bvh, int nodeid) {
+void refit_bvh(const std::shared_ptr<bvh_tree>& bvh, int nodeid) {
     // refit
     auto& node = bvh->nodes[nodeid];
     node.bbox = invalid_bbox3f;
@@ -1595,11 +1595,11 @@ void refit_bvh(bvh_tree* bvh, int nodeid) {
 }
 
 // Recursively recomputes the node bounds for a shape bvh
-void refit_bvh(bvh_tree* bvh) { refit_bvh(bvh, 0); }
+void refit_bvh(const std::shared_ptr<bvh_tree>& bvh) { refit_bvh(bvh, 0); }
 
 // Intersect ray with a bvh.
-bool intersect_bvh(const bvh_tree* bvh, const ray3f& ray_, bool find_any,
-    float& dist, int& iid, int& eid, vec2f& uv) {
+bool intersect_bvh(const std::shared_ptr<bvh_tree>& bvh, const ray3f& ray_,
+    bool find_any, float& dist, int& iid, int& eid, vec2f& uv) {
     // node stack
     int node_stack[128];
     auto node_cur = 0;
@@ -1715,8 +1715,8 @@ bool intersect_bvh(const bvh_tree* bvh, const ray3f& ray_, bool find_any,
 }
 
 // Finds the closest element with a bvh.
-bool overlap_bvh(const bvh_tree* bvh, const vec3f& pos, float max_dist,
-    bool find_any, float& dist, int& iid, int& eid, vec2f& uv) {
+bool overlap_bvh(const std::shared_ptr<bvh_tree>& bvh, const vec3f& pos,
+    float max_dist, bool find_any, float& dist, int& iid, int& eid, vec2f& uv) {
     // node stack
     int node_stack[64];
     auto node_cur = 0;
@@ -1824,7 +1824,7 @@ bool overlap_bvh(const bvh_tree* bvh, const vec3f& pos, float max_dist,
 #if 0
     // Finds the overlap between BVH leaf nodes.
     template <typename OverlapElem>
-    void overlap_bvh_elems(const bvh_tree* bvh1, const bvh_tree* bvh2,
+    void overlap_bvh_elems(const std::shared_ptr<bvh_tree>& bvh1, const std::shared_ptr<bvh_tree>& bvh2,
                            bool skip_duplicates, bool skip_self, std::vector<vec2i>& overlaps,
                            const OverlapElem& overlap_elems) {
         // node stack
@@ -1883,6 +1883,101 @@ bool overlap_bvh(const bvh_tree* bvh, const vec3f& pos, float max_dist,
 #endif
 
 }  // namespace ygl
+
+// -----------------------------------------------------------------------------
+// IMPLEMENTATION FOR WRAPPER FOR EMBREE BVH
+// -----------------------------------------------------------------------------
+namespace ygl {
+#if YGL_EMBREE
+
+    bvh_embree::~bvh_embree() {
+        for(auto shp : shapes) rtcReleaseGeometry(shp);
+        if(scene) rtcReleaseScene(scene);
+        if(device) rtcReleaseDevice(device);
+    }
+    
+    void embree_error(void* ctx, RTCError code,
+                      const char* str) {
+        switch (code) {
+            case RTC_ERROR_UNKNOWN: printf("RTC_ERROR_UNKNOWN"); break;
+            case RTC_ERROR_INVALID_ARGUMENT:
+                printf("RTC_ERROR_INVALID_ARGUMENT");
+                break;
+            case RTC_ERROR_INVALID_OPERATION:
+                printf("RTC_ERROR_INVALID_OPERATION");
+                break;
+            case RTC_ERROR_OUT_OF_MEMORY: printf("RTC_ERROR_OUT_OF_MEMORY"); break;
+            case RTC_ERROR_UNSUPPORTED_CPU:
+                printf("RTC_ERROR_UNSUPPORTED_CPU");
+                break;
+            case RTC_ERROR_CANCELLED: printf("RTC_ERROR_CANCELLED"); break;
+            default: printf("invalid error code"); break;
+        }
+        printf("%s", str);
+    }
+    
+    // Initialize Embree bvh.
+    std::shared_ptr<bvh_embree> make_embree_bvh() {
+        auto bvh = std::make_shared<bvh_embree>();
+        bvh = std::make_shared<bvh_embree>();
+        bvh->device = rtcNewDevice("");
+        rtcSetDeviceErrorFunction(bvh->device, embree_error, nullptr);
+        bvh->scene = rtcNewScene(bvh->device);
+        return bvh;
+    }
+    
+    // Add triangle mesh.
+    void add_shape(const std::shared_ptr<bvh_embree>& bvh, int iid, const std::vector<vec3i>& triangles, const std::vector<vec3f>& pos) {
+        auto shp = rtcNewGeometry(bvh->device, RTC_GEOMETRY_TYPE_TRIANGLE);
+            rtcSetGeometryVertexAttributeCount(shp, 1);
+            auto epos = rtcSetNewGeometryBuffer(shp, RTC_BUFFER_TYPE_VERTEX, 0,
+                                                RTC_FORMAT_FLOAT3, 3 * 4, pos.size());
+            auto etriangles = rtcSetNewGeometryBuffer(shp, RTC_BUFFER_TYPE_INDEX, 0,
+                                                     RTC_FORMAT_UINT3, 3 * 4, triangles.size());
+            memcpy(epos, pos.data(), pos.size() * 12);
+            memcpy(etriangles, triangles.data(), triangles.size() * 12);
+            rtcCommitGeometry(shp);
+            rtcAttachGeometryByID(bvh->scene, shp, iid);
+            bvh->shapes.push_back(shp);
+    }
+    
+    // Build BVH.
+    void build_bvh(const std::shared_ptr<bvh_embree>& bvh) {
+        rtcCommitScene(bvh->scene);
+    }
+    
+    // Intersect ray with a bvh returning either the first or any intersection
+    // depending on `find_any`. Returns the ray distance `dist`, the instance
+    // id `iid`, the shape id `sid`, the shape element index `eid` and the
+    // shape barycentric coordinates `uv`.
+    bool intersect_bvh(const std::shared_ptr<bvh_embree>& bvh, const ray3f& ray,
+                       bool find_any, float& dist, int& iid, int& eid, vec2f& uv) {
+            RTCRayHit embree_ray;
+            embree_ray.ray.org_x = ray.o.x;
+            embree_ray.ray.org_y = ray.o.y;
+            embree_ray.ray.org_z = ray.o.z;
+            embree_ray.ray.dir_x = ray.d.x;
+            embree_ray.ray.dir_y = ray.d.y;
+            embree_ray.ray.dir_z = ray.d.z;
+            embree_ray.ray.tnear = ray.tmin;
+            embree_ray.ray.tfar = ray.tmax;
+            embree_ray.ray.flags = 0;
+            embree_ray.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+            embree_ray.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
+            RTCIntersectContext embree_ctx;
+            rtcInitIntersectContext(&embree_ctx);
+            rtcIntersect1((RTCScene)bvh->scene, &embree_ctx, &embree_ray);
+            if (embree_ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) return false;
+            auto isec = scene_intersection{};
+            dist = embree_ray.ray.tfar;
+            uv = {embree_ray.hit.u, embree_ray.hit.v};
+            eid = embree_ray.hit.primID;
+            iid = embree_ray.hit.geomID;
+            return true;
+    }
+
+#endif
+}
 
 // -----------------------------------------------------------------------------
 // IMPLEMENTATION OF SHAPE EXAMPLES
@@ -3384,36 +3479,17 @@ image4f make_turbulence_image(int width, int height, float scale,
 // -----------------------------------------------------------------------------
 namespace ygl {
 
-// cleanup
-shape::~shape() {
-    if (bvh) delete bvh;
-}
-
-// cleanup
-scene::~scene() {
-    if (bvh) delete bvh;
-    for (auto v : cameras) delete v;
-    for (auto v : shapes) delete v;
-    for (auto v : subdivs) delete v;
-    for (auto v : instances) delete v;
-    for (auto v : materials) delete v;
-    for (auto v : textures) delete v;
-    for (auto v : environments) delete v;
-    for (auto v : nodes) delete v;
-    for (auto v : animations) delete v;
-}
-
 // Computes a shape bounding box.
-bbox3f compute_bbox(const shape* shp) {
+bbox3f compute_bbox(const std::shared_ptr<shape>& shp) {
     auto bbox = invalid_bbox3f;
     for (auto p : shp->pos) bbox += p;
     return bbox;
 }
 
 // Updates the scene and scene's instances bounding boxes
-bbox3f compute_bbox(const scene* scn) {
-    auto sbbox = std::unordered_map<shape*, bbox3f>();
-    for (auto shp : scn->shapes) sbbox[shp] = compute_bbox(shp);
+bbox3f compute_bbox(const std::shared_ptr<scene>& scn) {
+    auto sbbox = std::unordered_map<std::shared_ptr<shape>, bbox3f>();
+    for (auto& shp : scn->shapes) sbbox[shp] = compute_bbox(shp);
     auto bbox = invalid_bbox3f;
     for (auto ist : scn->instances)
         bbox += transform_bbox(ist->frame, sbbox[ist->shp]);
@@ -3421,7 +3497,8 @@ bbox3f compute_bbox(const scene* scn) {
 }
 
 // Updates tesselation.
-void tesselate_subdiv(const subdiv* sbd, shape* shp) {
+void tesselate_subdiv(
+    const std::shared_ptr<subdiv>& sbd, const std::shared_ptr<shape>& shp) {
     shp->name = sbd->name;
     auto quads_pos = sbd->quads_pos;
     auto quads_texcoord = sbd->quads_texcoord;
@@ -3444,7 +3521,7 @@ void tesselate_subdiv(const subdiv* sbd, shape* shp) {
         color);
     shp->triangles = convert_quads_to_triangles(quads);
 }
-void tesselate_subdivs(scene* scn) {
+void tesselate_subdivs(const std::shared_ptr<scene>& scn) {
     for (auto ist : scn->instances) {
         if (!ist->sbd) continue;
         tesselate_subdiv(ist->sbd, ist->shp);
@@ -3452,8 +3529,8 @@ void tesselate_subdivs(scene* scn) {
 }
 
 // Update animation transforms
-void update_transforms(
-    animation* anm, float time, const std::string& anim_group) {
+void update_transforms(const std::shared_ptr<animation>& anm, float time,
+    const std::string& anim_group) {
     if (anim_group != "" && anim_group != anm->group) return;
 
     if (!anm->translation.empty()) {
@@ -3505,17 +3582,19 @@ void update_transforms(
 }
 
 // Update node transforms
-void update_transforms(node* nde, const frame3f& parent = identity_frame3f) {
+void update_transforms(const std::shared_ptr<node>& nde,
+    const frame3f& parent = identity_frame3f) {
     auto frame = parent * nde->local * translation_frame(nde->translation) *
                  rotation_frame(nde->rotation) * scaling_frame(nde->scale);
     if (nde->ist) nde->ist->frame = frame;
     if (nde->cam) nde->cam->frame = frame;
     if (nde->env) nde->env->frame = frame;
-    for (auto child : nde->children) update_transforms(child, frame);
+    for (auto& child : nde->children) update_transforms(child.lock(), frame);
 }
 
 // Update node transforms
-void update_transforms(scene* scn, float time, const std::string& anim_group) {
+void update_transforms(const std::shared_ptr<scene>& scn, float time,
+    const std::string& anim_group) {
     for (auto& agr : scn->animations) update_transforms(agr, time, anim_group);
     for (auto& nde : scn->nodes) nde->children.clear();
     for (auto& nde : scn->nodes)
@@ -3525,7 +3604,8 @@ void update_transforms(scene* scn, float time, const std::string& anim_group) {
 }
 
 // Compute animation range
-vec2f compute_animation_range(const scene* scn, const std::string& anim_group) {
+vec2f compute_animation_range(
+    const std::shared_ptr<scene>& scn, const std::string& anim_group) {
     if (scn->animations.empty()) return zero2f;
     auto range = vec2f{+flt_max, -flt_max};
     for (auto anm : scn->animations) {
@@ -3538,7 +3618,8 @@ vec2f compute_animation_range(const scene* scn, const std::string& anim_group) {
 }
 
 // Update lights.
-void init_lights(scene* scn, bool do_shapes, bool do_environments) {
+void init_lights(
+    const std::shared_ptr<scene>& scn, bool do_shapes, bool do_environments) {
     if (do_shapes) {
         for (auto shp : scn->shapes) shp->elem_cdf.clear();
     }
@@ -3562,7 +3643,7 @@ void init_lights(scene* scn, bool do_shapes, bool do_environments) {
 
 // Generate a distribution for sampling a shape uniformly based
 // on area/length.
-void update_shape_cdf(shape* shp) {
+void update_shape_cdf(const std::shared_ptr<shape>& shp) {
     shp->elem_cdf.clear();
     if (!shp->triangles.empty()) {
         shp->elem_cdf = sample_triangles_cdf(shp->triangles, shp->pos);
@@ -3576,7 +3657,7 @@ void update_shape_cdf(shape* shp) {
 }
 
 // Update environment CDF for sampling.
-void update_environment_cdf(environment* env) {
+void update_environment_cdf(const std::shared_ptr<environment>& env) {
     env->elem_cdf.clear();
     auto txt = env->ke_txt;
     if (!txt) return;
@@ -3593,8 +3674,8 @@ void update_environment_cdf(environment* env) {
 }
 
 // Build a shape BVH
-void build_bvh(shape* shp, bool sah) {
-    if (!shp->bvh) shp->bvh = new bvh_tree();
+void build_bvh(const std::shared_ptr<shape>& shp, bool sah) {
+    shp->bvh = std::make_shared<bvh_tree>();
     shp->bvh->pos = shp->pos;
     shp->bvh->radius = shp->radius;
     if (shp->bvh->radius.empty())
@@ -3606,12 +3687,12 @@ void build_bvh(shape* shp, bool sah) {
 }
 
 // Build a scene BVH
-void build_bvh(scene* scn, bool sah) {
+void build_bvh(const std::shared_ptr<scene>& scn, bool sah) {
     // shapes
     for (auto shp : scn->shapes) build_bvh(shp, sah);
 
     // tree bvh
-    if (!scn->bvh) scn->bvh = new bvh_tree();
+    scn->bvh = std::make_shared<bvh_tree>();
     scn->bvh->ist_frames.resize(scn->instances.size());
     scn->bvh->ist_inv_frames.resize(scn->instances.size());
     scn->bvh->ist_bvhs.resize(scn->instances.size());
@@ -3625,62 +3706,26 @@ void build_bvh(scene* scn, bool sah) {
 }
 
 #if YGL_EMBREE
-void embree_error(void* ctx, RTCError code, const char* str) {
-    switch (code) {
-        case RTC_ERROR_UNKNOWN: printf("RTC_ERROR_UNKNOWN"); break;
-        case RTC_ERROR_INVALID_ARGUMENT:
-            printf("RTC_ERROR_INVALID_ARGUMENT");
-            break;
-        case RTC_ERROR_INVALID_OPERATION:
-            printf("RTC_ERROR_INVALID_OPERATION");
-            break;
-        case RTC_ERROR_OUT_OF_MEMORY: printf("RTC_ERROR_OUT_OF_MEMORY"); break;
-        case RTC_ERROR_UNSUPPORTED_CPU:
-            printf("RTC_ERROR_UNSUPPORTED_CPU");
-            break;
-        case RTC_ERROR_CANCELLED: printf("RTC_ERROR_CANCELLED"); break;
-        default: printf("invalid error code"); break;
-    }
-    printf("%s", str);
-}
-
 // Build a scene BVH
-void build_bvh_embree(scene* scn) {
-    scn->embree_device = rtcNewDevice("");
-    rtcSetDeviceErrorFunction(
-        (RTCDevice)scn->embree_device, embree_error, nullptr);
-    scn->embree_bvh = rtcNewScene((RTCDevice)scn->embree_device);
+void build_bvh_embree(const std::shared_ptr<scene>& scn) {
+    scn->embree_bvh = make_embree_bvh();
     auto sid = 0;
     for (auto ist : scn->instances) {
         if (!ist->shp->triangles.empty()) {
-            ist->shp->embree_bvh = rtcNewGeometry(
-                (RTCDevice)scn->embree_device, RTC_GEOMETRY_TYPE_TRIANGLE);
-            rtcSetGeometryVertexAttributeCount(
-                (RTCGeometry)ist->shp->embree_bvh, 1);
-            auto vert = rtcSetNewGeometryBuffer(
-                (RTCGeometry)ist->shp->embree_bvh, RTC_BUFFER_TYPE_VERTEX, 0,
-                RTC_FORMAT_FLOAT3, 3 * 4, ist->shp->pos.size());
-            auto triangles = rtcSetNewGeometryBuffer(
-                (RTCGeometry)ist->shp->embree_bvh, RTC_BUFFER_TYPE_INDEX, 0,
-                RTC_FORMAT_UINT3, 3 * 4, ist->shp->triangles.size());
             auto pos = ist->shp->pos;
             for (auto& p : pos) p = transform_point(ist->frame, p);
-            memcpy(vert, pos.data(), pos.size() * 12);
-            memcpy(triangles, ist->shp->triangles.data(),
-                ist->shp->triangles.size() * 12);
-            rtcCommitGeometry((RTCGeometry)ist->shp->embree_bvh);
-            rtcAttachGeometryByID((RTCScene)scn->embree_bvh,
-                (RTCGeometry)ist->shp->embree_bvh, sid++);
+            auto& triangles = ist->shp->triangles;
+            add_shape(scn->embree_bvh, sid++, triangles, pos);
         } else if (!ist->shp->lines.empty()) {
             // TODO: lines
         }
     }
-    rtcCommitScene((RTCScene)scn->embree_bvh);
+    build_bvh(scn->embree_bvh);
 }
 #endif
 
 // Refits a scene BVH
-void refit_bvh(shape* shp) {
+void refit_bvh(const std::shared_ptr<shape>& shp) {
     shp->bvh->pos = shp->pos;
     shp->bvh->radius = shp->radius;
     if (shp->bvh->radius.empty())
@@ -3689,7 +3734,7 @@ void refit_bvh(shape* shp) {
 }
 
 // Refits a scene BVH
-void refit_bvh(scene* scn) {
+void refit_bvh(const std::shared_ptr<scene>& scn) {
     scn->bvh->ist_frames.resize(scn->instances.size());
     scn->bvh->ist_inv_frames.resize(scn->instances.size());
     scn->bvh->ist_bvhs.resize(scn->instances.size());
@@ -3703,7 +3748,7 @@ void refit_bvh(scene* scn) {
 }
 
 // Add missing names and resolve duplicated names.
-void add_missing_names(scene* scn) {
+void add_missing_names(const std::shared_ptr<scene>& scn) {
     auto fix_names = [](auto& vals, const std::string& base) {
         auto nmap = std::unordered_map<std::string, int>();
         for (auto val : vals) {
@@ -3726,7 +3771,7 @@ void add_missing_names(scene* scn) {
 }
 
 // Add missing tangent space if needed.
-void add_missing_tangent_space(scene* scn) {
+void add_missing_tangent_space(const std::shared_ptr<scene>& scn) {
     for (auto ist : scn->instances) {
         if (!ist->shp->tangsp.empty() || ist->shp->texcoord.empty()) continue;
         if (!ist->mat || (!ist->mat->norm_txt && !ist->mat->bump_txt)) continue;
@@ -3743,8 +3788,8 @@ void add_missing_tangent_space(scene* scn) {
 }
 
 // Add missing materials.
-void add_missing_materials(scene* scn) {
-    auto mat = (material*)nullptr;
+void add_missing_materials(const std::shared_ptr<scene>& scn) {
+    auto mat = std::shared_ptr<material>();
     for (auto ist : scn->instances) {
         if (ist->mat) continue;
         if (!mat) {
@@ -3756,7 +3801,8 @@ void add_missing_materials(scene* scn) {
 }
 
 // Checks for validity of the scene.
-std::vector<std::string> validate(const scene* scn, bool skip_textures) {
+std::vector<std::string> validate(
+    const std::shared_ptr<scene>& scn, bool skip_textures) {
     auto errs = std::vector<std::string>();
     auto check_names = [&errs](const auto& vals, const std::string& base) {
         auto used = std::unordered_map<std::string, int>();
@@ -3768,7 +3814,7 @@ std::vector<std::string> validate(const scene* scn, bool skip_textures) {
                 errs.push_back("duplicated " + base + " name " + kv.first);
         }
     };
-    auto check_empty_textures = [&errs](const std::vector<texture*>& vals) {
+    auto check_empty_textures = [&errs](const std::vector<std::shared_ptr<texture>>& vals) {
         for (auto val : vals) {
             if (val->img.pxl.empty())
                 errs.push_back("empty texture " + val->name);
@@ -3788,12 +3834,12 @@ std::vector<std::string> validate(const scene* scn, bool skip_textures) {
 }
 
 // add missing camera
-camera* make_bbox_camera(const std::string& name, const bbox3f& bbox,
-    float width, float height, float focal) {
+std::shared_ptr<camera> make_bbox_camera(const std::string& name,
+    const bbox3f& bbox, float width, float height, float focal) {
     auto bbox_center = (bbox.max + bbox.min) / 2.0f;
     auto bbox_size = bbox.max - bbox.min;
     auto bbox_msize = max(bbox_size.x, max(bbox_size.y, bbox_size.z));
-    auto cam = new camera();
+    auto cam = std::make_shared<camera>();
     cam->name = name;
     auto camera_dir = vec3f{1, 0.4f, 1};
     auto from = camera_dir * bbox_msize + bbox_center;
@@ -3819,35 +3865,20 @@ namespace ygl {
 #if YGL_EMBREE
 // Scene intersection.
 scene_intersection intersect_ray_embree(
-    const scene* scn, const ray3f& ray, bool find_any) {
-    RTCRayHit embree_ray;
-    embree_ray.ray.org_x = ray.o.x;
-    embree_ray.ray.org_y = ray.o.y;
-    embree_ray.ray.org_z = ray.o.z;
-    embree_ray.ray.dir_x = ray.d.x;
-    embree_ray.ray.dir_y = ray.d.y;
-    embree_ray.ray.dir_z = ray.d.z;
-    embree_ray.ray.tnear = ray.tmin;
-    embree_ray.ray.tfar = ray.tmax;
-    embree_ray.ray.flags = 0;
-    embree_ray.hit.geomID = RTC_INVALID_GEOMETRY_ID;
-    embree_ray.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
-    RTCIntersectContext embree_ctx;
-    rtcInitIntersectContext(&embree_ctx);
-    rtcIntersect1((RTCScene)scn->embree_bvh, &embree_ctx, &embree_ray);
-    if (embree_ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) return {};
-    auto isec = scene_intersection{};
-    isec.dist = embree_ray.ray.tfar;
-    isec.uv = {embree_ray.hit.u, embree_ray.hit.v};
-    isec.ei = embree_ray.hit.primID;
-    isec.ist = scn->instances.at(embree_ray.hit.geomID);
+    const std::shared_ptr<scene>& scn, const ray3f& ray, bool find_any) {
+    auto iid = 0;
+    auto isec = scene_intersection();
+    if (!intersect_bvh(
+                       scn->embree_bvh, ray, find_any, isec.dist, iid, isec.ei, isec.uv))
+        return {};
+    isec.ist = scn->instances[iid];
     return isec;
 }
 #endif
 
 // Scene intersection.
 scene_intersection intersect_ray(
-    const scene* scn, const ray3f& ray, bool find_any) {
+    const std::shared_ptr<scene>& scn, const ray3f& ray, bool find_any) {
 #if YGL_EMBREE
     if (scn->embree_bvh) return intersect_ray_embree(scn, ray, find_any);
 #endif
@@ -3861,7 +3892,7 @@ scene_intersection intersect_ray(
 }
 
 // Shape element normal.
-vec3f eval_elem_norm(const shape* shp, int ei) {
+vec3f eval_elem_norm(const std::shared_ptr<shape>& shp, int ei) {
     auto norm = zero3f;
     if (!shp->triangles.empty()) {
         auto t = shp->triangles[ei];
@@ -3876,7 +3907,7 @@ vec3f eval_elem_norm(const shape* shp, int ei) {
 }
 
 // Shape element normal.
-vec4f eval_elem_tangsp(const shape* shp, int ei) {
+vec4f eval_elem_tangsp(const std::shared_ptr<shape>& shp, int ei) {
     auto tangsp = zero4f;
     if (!shp->triangles.empty()) {
         auto t = shp->triangles[ei];
@@ -3901,8 +3932,8 @@ vec4f eval_elem_tangsp(const shape* shp, int ei) {
 
 // Shape value interpolated using barycentric coordinates
 template <typename T>
-T eval_elem(
-    const shape* shp, const std::vector<T>& vals, int ei, const vec2f& uv) {
+T eval_elem(const std::shared_ptr<shape>& shp, const std::vector<T>& vals,
+    int ei, const vec2f& uv) {
     if (vals.empty()) return {};
     if (!shp->triangles.empty()) {
         auto t = shp->triangles[ei];
@@ -3920,31 +3951,32 @@ T eval_elem(
 }
 
 // Shape values interpolated using barycentric coordinates
-vec3f eval_pos(const shape* shp, int ei, const vec2f& uv) {
+vec3f eval_pos(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv) {
     return eval_elem(shp, shp->pos, ei, uv);
 }
-vec3f eval_norm(const shape* shp, int ei, const vec2f& uv) {
+vec3f eval_norm(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv) {
     if (shp->norm.empty()) return eval_elem_norm(shp, ei);
     return normalize(eval_elem(shp, shp->norm, ei, uv));
 }
-vec2f eval_texcoord(const shape* shp, int ei, const vec2f& uv) {
+vec2f eval_texcoord(
+    const std::shared_ptr<shape>& shp, int ei, const vec2f& uv) {
     if (shp->texcoord.empty()) return uv;
     return eval_elem(shp, shp->texcoord, ei, uv);
 }
-vec4f eval_color(const shape* shp, int ei, const vec2f& uv) {
+vec4f eval_color(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv) {
     if (shp->color.empty()) return {1, 1, 1, 1};
     return eval_elem(shp, shp->color, ei, uv);
 }
-float eval_radius(const shape* shp, int ei, const vec2f& uv) {
+float eval_radius(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv) {
     if (shp->radius.empty()) return 0.001f;
     return eval_elem(shp, shp->radius, ei, uv);
 }
-vec4f eval_tangsp(const shape* shp, int ei, const vec2f& uv) {
+vec4f eval_tangsp(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv) {
     if (shp->tangsp.empty()) return eval_elem_tangsp(shp, ei);
     return eval_elem(shp, shp->tangsp, ei, uv);
 }
-vec3f eval_tangsp(
-    const shape* shp, int ei, const vec2f& uv, bool& left_handed) {
+vec3f eval_tangsp(const std::shared_ptr<shape>& shp, int ei, const vec2f& uv,
+    bool& left_handed) {
     auto tangsp = (shp->tangsp.empty()) ? eval_elem_tangsp(shp, ei) :
                                           eval_elem(shp, shp->tangsp, ei, uv);
     left_handed = tangsp.w < 0;
@@ -3952,33 +3984,36 @@ vec3f eval_tangsp(
 }
 
 // Instance values interpolated using barycentric coordinates.
-vec3f eval_pos(const instance* ist, int ei, const vec2f& uv) {
+vec3f eval_pos(const std::shared_ptr<instance>& ist, int ei, const vec2f& uv) {
     return transform_point(ist->frame, eval_pos(ist->shp, ei, uv));
 }
-vec3f eval_norm(const instance* ist, int ei, const vec2f& uv) {
+vec3f eval_norm(const std::shared_ptr<instance>& ist, int ei, const vec2f& uv) {
     return transform_direction(ist->frame, eval_norm(ist->shp, ei, uv));
 }
-vec2f eval_texcoord(const instance* ist, int ei, const vec2f& uv) {
+vec2f eval_texcoord(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv) {
     return eval_texcoord(ist->shp, ei, uv);
 }
-vec4f eval_color(const instance* ist, int ei, const vec2f& uv) {
+vec4f eval_color(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv) {
     return eval_color(ist->shp, ei, uv);
 }
-float eval_radius(const instance* ist, int ei, const vec2f& uv) {
+float eval_radius(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv) {
     return eval_radius(ist->shp, ei, uv);
 }
-vec3f eval_tangsp(
-    const instance* ist, int ei, const vec2f& uv, bool& left_handed) {
+vec3f eval_tangsp(const std::shared_ptr<instance>& ist, int ei, const vec2f& uv,
+    bool& left_handed) {
     return transform_direction(
         ist->frame, eval_tangsp(ist->shp, ei, uv, left_handed));
 }
 // Instance element values.
-vec3f eval_elem_norm(const instance* ist, int ei) {
+vec3f eval_elem_norm(const std::shared_ptr<instance>& ist, int ei) {
     return transform_direction(ist->frame, eval_elem_norm(ist->shp, ei));
 }
 // Shading normals including material perturbations.
-vec3f eval_shading_norm(
-    const instance* ist, int ei, const vec2f& uv, const vec3f& o) {
+vec3f eval_shading_norm(const std::shared_ptr<instance>& ist, int ei,
+    const vec2f& uv, const vec3f& o) {
     if (!ist->shp->triangles.empty()) {
         auto n = eval_norm(ist, ei, uv);
         if (ist->mat && ist->mat->norm_txt) {
@@ -4001,7 +4036,7 @@ vec3f eval_shading_norm(
 }
 
 // Environment texture coordinates from the direction.
-vec2f eval_texcoord(const environment* env, const vec3f& w) {
+vec2f eval_texcoord(const std::shared_ptr<environment>& env, const vec3f& w) {
     auto wl = transform_direction_inverse(env->frame, w);
     auto uv = vec2f{
         atan2(wl.z, wl.x) / (2 * pi), acos(clamp(wl.y, -1.0f, 1.0f)) / pi};
@@ -4009,13 +4044,14 @@ vec2f eval_texcoord(const environment* env, const vec3f& w) {
     return uv;
 }
 // Evaluate the environment direction.
-vec3f eval_direction(const environment* env, const vec2f& uv) {
+vec3f eval_direction(const std::shared_ptr<environment>& env, const vec2f& uv) {
     return transform_direction(
         env->frame, {cos(uv.x * 2 * pi) * sin(uv.y * pi), cos(uv.y * pi),
                         sin(uv.x * 2 * pi) * sin(uv.y * pi)});
 }
 // Evaluate the environment color.
-vec3f eval_environment(const environment* env, const vec3f& w) {
+vec3f eval_environment(
+    const std::shared_ptr<environment>& env, const vec3f& w) {
     auto ke = env->ke;
     if (env->ke_txt) {
         ke *= xyz(eval_texture(env->ke_txt, eval_texcoord(env, w)));
@@ -4024,7 +4060,7 @@ vec3f eval_environment(const environment* env, const vec3f& w) {
 }
 
 // Evaluate a texture
-vec4f eval_texture(const texture* txt, const vec2f& texcoord) {
+vec4f eval_texture(const std::shared_ptr<texture>& txt, const vec2f& texcoord) {
     if (!txt || txt->img.pxl.empty()) return {1, 1, 1, 1};
 
     // get image width/height
@@ -4054,10 +4090,11 @@ vec4f eval_texture(const texture* txt, const vec2f& texcoord) {
 }
 
 // Set and evaluate camera parameters. Setters take zeros as default values.
-float eval_camera_fovy(const camera* cam) {
+float eval_camera_fovy(const std::shared_ptr<camera>& cam) {
     return 2 * std::atan(cam->height / (2 * cam->focal));
 }
-void set_camera_fovy(camera* cam, float fovy, float aspect, float width) {
+void set_camera_fovy(
+    const std::shared_ptr<camera>& cam, float fovy, float aspect, float width) {
     cam->width = width;
     cam->height = width / aspect;
     cam->focal = cam->height / (2 * std::tan(fovy / 2));
@@ -4065,7 +4102,8 @@ void set_camera_fovy(camera* cam, float fovy, float aspect, float width) {
 
 // Generates a ray from a camera for image plane coordinate uv and
 // the lens coordinates luv.
-ray3f eval_camera_ray(const camera* cam, const vec2f& uv, const vec2f& luv) {
+ray3f eval_camera_ray(
+    const std::shared_ptr<camera>& cam, const vec2f& uv, const vec2f& luv) {
     auto dist = cam->focal;
     if (cam->focus < flt_max) {
         dist = cam->focal * cam->focus / (cam->focus - cam->focal);
@@ -4081,31 +4119,36 @@ ray3f eval_camera_ray(const camera* cam, const vec2f& uv, const vec2f& luv) {
     return ray;
 }
 
-int image_width(const camera* cam, int yresolution) {
+int image_width(const std::shared_ptr<camera>& cam, int yresolution) {
     return (int)round(yresolution * cam->width / cam->height);
 }
-int image_height(const camera* cam, int yresolution) { return yresolution; }
+int image_height(const std::shared_ptr<camera>& cam, int yresolution) {
+    return yresolution;
+}
 
-vec2i eval_image_resolution(const camera* cam, int yresolution) {
+vec2i eval_image_resolution(
+    const std::shared_ptr<camera>& cam, int yresolution) {
     return {(int)round(yresolution * cam->width / cam->height), yresolution};
 }
 
 // Generates a ray from a camera for pixel coordinates `ij`, the
 // resolution `res`, the sub-pixel coordinates `puv` and the lens
 // coordinates `luv` and the image resolution `res`.
-ray3f eval_camera_ray(const camera* cam, int i, int j, int width, int height,
-    const vec2f& puv, const vec2f& luv) {
+ray3f eval_camera_ray(const std::shared_ptr<camera>& cam, int i, int j,
+    int width, int height, const vec2f& puv, const vec2f& luv) {
     auto uv = vec2f{(i + puv.x) / width, (j + puv.y) / height};
     return eval_camera_ray(cam, uv, luv);
 }
 
 // Evaluates material parameters.
-vec3f eval_emission(const instance* ist, int ei, const vec2f& uv) {
+vec3f eval_emission(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv) {
     if (!ist || !ist->mat) return zero3f;
     return ist->mat->ke * xyz(eval_color(ist, ei, uv)) *
            xyz(eval_texture(ist->mat->ke_txt, eval_texcoord(ist, ei, uv)));
 }
-vec3f eval_diffuse(const instance* ist, int ei, const vec2f& uv) {
+vec3f eval_diffuse(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv) {
     if (!ist || !ist->mat) return zero3f;
     if (!ist->mat->base_metallic) {
         return ist->mat->kd * xyz(eval_color(ist, ei, uv)) *
@@ -4119,7 +4162,8 @@ vec3f eval_diffuse(const instance* ist, int ei, const vec2f& uv) {
         return kb * (1 - km);
     }
 }
-vec3f eval_specular(const instance* ist, int ei, const vec2f& uv) {
+vec3f eval_specular(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv) {
     if (!ist || !ist->mat) return zero3f;
     if (!ist->mat->base_metallic) {
         return ist->mat->ks * xyz(eval_color(ist, ei, uv)) *
@@ -4133,7 +4177,8 @@ vec3f eval_specular(const instance* ist, int ei, const vec2f& uv) {
         return kb * km + vec3f{0.04f, 0.04f, 0.04f} * (1 - km);
     }
 }
-float eval_roughness(const instance* ist, int ei, const vec2f& uv) {
+float eval_roughness(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv) {
     if (!ist || !ist->mat) return 1;
     if (!ist->mat->base_metallic) {
         if (!ist->mat->gltf_textures) {
@@ -4154,19 +4199,21 @@ float eval_roughness(const instance* ist, int ei, const vec2f& uv) {
         return rs * rs;
     }
 }
-vec3f eval_transmission(const instance* ist, int ei, const vec2f& uv) {
+vec3f eval_transmission(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv) {
     if (!ist || !ist->mat) return zero3f;
     return ist->mat->kt * xyz(eval_color(ist, ei, uv)) *
            xyz(eval_texture(ist->mat->kt_txt, eval_texcoord(ist, ei, uv)));
 }
-float eval_opacity(const instance* ist, int ei, const vec2f& uv) {
+float eval_opacity(
+    const std::shared_ptr<instance>& ist, int ei, const vec2f& uv) {
     if (!ist || !ist->mat) return 1;
     return ist->mat->op * eval_color(ist->shp, ei, uv).w *
            eval_texture(ist->mat->op_txt, eval_texcoord(ist, ei, uv)).w;
 }
 
 // Evaluates the bsdf at a location.
-bsdf eval_bsdf(const instance* ist, int ei, const vec2f& uv) {
+bsdf eval_bsdf(const std::shared_ptr<instance>& ist, int ei, const vec2f& uv) {
     auto f = bsdf();
     f.kd = eval_diffuse(ist, ei, uv);
     f.ks = eval_specular(ist, ei, uv);
@@ -4183,7 +4230,7 @@ bool is_delta_bsdf(const bsdf& f) { return f.rs == 0 && f.kd == zero3f; }
 
 // Sample a shape based on a distribution.
 std::pair<int, vec2f> sample_shape(
-    const shape* shp, float re, const vec2f& ruv) {
+    const std::shared_ptr<shape>& shp, float re, const vec2f& ruv) {
     // TODO: implement sampling without cdf
     if (shp->elem_cdf.empty()) return {};
     if (!shp->triangles.empty()) {
@@ -4205,7 +4252,8 @@ std::pair<int, vec2f> sample_shape(
 namespace ygl {
 
 // Merge scene into one another
-void merge_into(scene* merge_into, scene* merge_from) {
+void merge_into(const std::shared_ptr<scene>& merge_into,
+    const std::shared_ptr<scene>& merge_from) {
     auto merge = [](auto& v1, auto& v2) {
         v1.insert(v1.end(), v2.begin(), v2.end());
         v2.clear();
@@ -4219,7 +4267,7 @@ void merge_into(scene* merge_into, scene* merge_from) {
     merge(merge_into->animations, merge_from->animations);
 }
 
-void print_stats(const scene* scn) {
+void print_stats(const std::shared_ptr<scene>& scn) {
     uint64_t num_cameras = 0;
     uint64_t num_shape_groups = 0;
     uint64_t num_shapes = 0;
@@ -4314,8 +4362,8 @@ std::atomic<uint64_t> _trace_npaths{0};
 std::atomic<uint64_t> _trace_nrays{0};
 
 // Intersect a scene handling opacity.
-scene_intersection intersect_ray_cutout(
-    const scene* scn, const ray3f& ray_, rng_state& rng, int nbounces) {
+scene_intersection intersect_ray_cutout(const std::shared_ptr<scene>& scn,
+    const ray3f& ray_, rng_state& rng, int nbounces) {
     auto ray = ray_;
     for (auto b = 0; b < nbounces; b++) {
         _trace_nrays += 1;
@@ -4549,7 +4597,8 @@ float sample_delta_brdf_pdf(
 }
 
 // Sample pdf for an environment.
-float sample_environment_pdf(environment* env, const vec3f& i) {
+float sample_environment_pdf(
+    const std::shared_ptr<environment>& env, const vec3f& i) {
     auto txt = env->ke_txt;
     if (!env->elem_cdf.empty() && txt) {
         auto texcoord = eval_texcoord(env, i);
@@ -4567,7 +4616,8 @@ float sample_environment_pdf(environment* env, const vec3f& i) {
 }
 
 // Picks a point on an environment.
-vec3f sample_environment(const environment* env, float rel, const vec2f& ruv) {
+vec3f sample_environment(
+    const std::shared_ptr<environment>& env, float rel, const vec2f& ruv) {
     auto txt = env->ke_txt;
     if (!env->elem_cdf.empty() && txt) {
         auto idx = sample_discrete(env->elem_cdf, rel);
@@ -4580,15 +4630,15 @@ vec3f sample_environment(const environment* env, float rel, const vec2f& ruv) {
 }
 
 // Picks a point on a light.
-vec3f sample_light(
-    const instance* ist, const vec3f& p, float rel, const vec2f& ruv) {
+vec3f sample_light(const std::shared_ptr<instance>& ist, const vec3f& p,
+    float rel, const vec2f& ruv) {
     auto sample = sample_shape(ist->shp, rel, ruv);
     return normalize(eval_pos(ist, sample.first, sample.second) - p);
 }
 
 // Sample pdf for a light point.
-float sample_light_pdf(const instance* ist, const vec3f& p, const vec3f& i,
-    const vec3f& lp, const vec3f& ln) {
+float sample_light_pdf(const std::shared_ptr<instance>& ist, const vec3f& p,
+    const vec3f& i, const vec3f& lp, const vec3f& ln) {
     if (ist->mat->ke == zero3f) return 0;
     // prob triangle * area triangle = area triangle mesh
     auto area = ist->shp->elem_cdf.back();
@@ -4596,8 +4646,8 @@ float sample_light_pdf(const instance* ist, const vec3f& p, const vec3f& i,
 }
 
 // Test occlusion.
-vec3f eval_transmission(
-    const scene* scn, const vec3f& from, const vec3f& to, int nbounces) {
+vec3f eval_transmission(const std::shared_ptr<scene>& scn, const vec3f& from,
+    const vec3f& to, int nbounces) {
     auto weight = vec3f{1, 1, 1};
     auto p = from;
     for (auto bounce = 0; bounce < nbounces; bounce++) {
@@ -4614,8 +4664,8 @@ vec3f eval_transmission(
 }
 
 // Recursive path tracing.
-vec3f trace_path(const scene* scn, const ray3f& ray_, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_path(const std::shared_ptr<scene>& scn, const ray3f& ray_,
+    rng_state& rng, int nbounces, bool* hit) {
     if (scn->lights.empty() && scn->environments.empty()) return zero3f;
 
     // initialize
@@ -4719,8 +4769,8 @@ vec3f trace_path(const scene* scn, const ray3f& ray_, rng_state& rng,
 }
 
 // Recursive path tracing.
-vec3f trace_path_naive(const scene* scn, const ray3f& ray_, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_path_naive(const std::shared_ptr<scene>& scn, const ray3f& ray_,
+    rng_state& rng, int nbounces, bool* hit) {
     if (scn->lights.empty() && scn->environments.empty()) return zero3f;
 
     // initialize
@@ -4782,8 +4832,8 @@ vec3f trace_path_naive(const scene* scn, const ray3f& ray_, rng_state& rng,
 }
 
 // Recursive path tracing.
-vec3f trace_path_nomis(const scene* scn, const ray3f& ray_, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_path_nomis(const std::shared_ptr<scene>& scn, const ray3f& ray_,
+    rng_state& rng, int nbounces, bool* hit) {
     if (scn->lights.empty() && scn->environments.empty()) return zero3f;
 
     // initialize
@@ -4865,8 +4915,8 @@ vec3f trace_path_nomis(const scene* scn, const ray3f& ray_, rng_state& rng,
 }
 
 // Direct illumination.
-vec3f trace_direct(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_direct(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit) {
     if (scn->lights.empty() && scn->environments.empty()) return zero3f;
 
     // intersect scene
@@ -4951,8 +5001,8 @@ vec3f trace_direct(const scene* scn, const ray3f& ray, rng_state& rng,
 }
 
 // Direct illumination.
-vec3f trace_direct_nomis(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_direct_nomis(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit) {
     if (scn->lights.empty() && scn->environments.empty()) return zero3f;
 
     // intersect scene
@@ -5025,8 +5075,8 @@ vec3f trace_direct_nomis(const scene* scn, const ray3f& ray, rng_state& rng,
 }
 
 // Environment illumination only with no shadows.
-vec3f trace_environment(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_environment(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit) {
     if (scn->environments.empty()) return zero3f;
 
     // intersect scene
@@ -5083,8 +5133,8 @@ vec3f trace_environment(const scene* scn, const ray3f& ray, rng_state& rng,
 }
 
 // Eyelight for quick previewing.
-vec3f trace_eyelight(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_eyelight(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit) {
     // intersect scene
     auto isec = intersect_ray(scn, ray);
     auto l = zero3f;
@@ -5124,8 +5174,8 @@ vec3f trace_eyelight(const scene* scn, const ray3f& ray, rng_state& rng,
 }
 
 // Debug previewing.
-vec3f trace_debug_normal(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_debug_normal(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit) {
     // intersect scene
     auto isec = intersect_ray(scn, ray);
     if (!isec.ist) return zero3f;
@@ -5140,8 +5190,8 @@ vec3f trace_debug_normal(const scene* scn, const ray3f& ray, rng_state& rng,
 }
 
 // Debug frontfacing.
-vec3f trace_debug_frontfacing(const scene* scn, const ray3f& ray,
-    rng_state& rng, int nbounces, bool* hit) {
+vec3f trace_debug_frontfacing(const std::shared_ptr<scene>& scn,
+    const ray3f& ray, rng_state& rng, int nbounces, bool* hit) {
     // intersect scene
     auto isec = intersect_ray(scn, ray);
     if (!isec.ist) return zero3f;
@@ -5156,8 +5206,8 @@ vec3f trace_debug_frontfacing(const scene* scn, const ray3f& ray,
 }
 
 // Debug previewing.
-vec3f trace_debug_albedo(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_debug_albedo(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit) {
     // intersect scene
     auto isec = intersect_ray(scn, ray);
     if (!isec.ist) return zero3f;
@@ -5171,8 +5221,8 @@ vec3f trace_debug_albedo(const scene* scn, const ray3f& ray, rng_state& rng,
 }
 
 // Debug previewing.
-vec3f trace_debug_diffuse(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_debug_diffuse(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit) {
     // intersect scene
     auto isec = intersect_ray(scn, ray);
     if (!isec.ist) return zero3f;
@@ -5186,8 +5236,8 @@ vec3f trace_debug_diffuse(const scene* scn, const ray3f& ray, rng_state& rng,
 }
 
 // Debug previewing.
-vec3f trace_debug_specular(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_debug_specular(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit) {
     // intersect scene
     auto isec = intersect_ray(scn, ray);
     if (!isec.ist) return zero3f;
@@ -5201,8 +5251,8 @@ vec3f trace_debug_specular(const scene* scn, const ray3f& ray, rng_state& rng,
 }
 
 // Debug previewing.
-vec3f trace_debug_roughness(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_debug_roughness(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit) {
     // intersect scene
     auto isec = intersect_ray(scn, ray);
     if (!isec.ist) return zero3f;
@@ -5216,8 +5266,8 @@ vec3f trace_debug_roughness(const scene* scn, const ray3f& ray, rng_state& rng,
 }
 
 // Debug previewing.
-vec3f trace_debug_texcoord(const scene* scn, const ray3f& ray, rng_state& rng,
-    int nbounces, bool* hit) {
+vec3f trace_debug_texcoord(const std::shared_ptr<scene>& scn, const ray3f& ray,
+    rng_state& rng, int nbounces, bool* hit) {
     // intersect scene
     auto isec = intersect_ray(scn, ray);
     if (!isec.ist) return zero3f;
@@ -5231,9 +5281,9 @@ vec3f trace_debug_texcoord(const scene* scn, const ray3f& ray, rng_state& rng,
 }
 
 // Trace a single sample
-vec4f trace_sample(const scene* scn, const camera* cam, int i, int j, int width,
-    int height, rng_state& rng, trace_func tracer, int nbounces,
-    float pixel_clamp = 100) {
+vec4f trace_sample(const std::shared_ptr<scene>& scn,
+    const std::shared_ptr<camera>& cam, int i, int j, int width, int height,
+    rng_state& rng, trace_func tracer, int nbounces, float pixel_clamp = 100) {
     _trace_npaths += 1;
     auto ray =
         eval_camera_ray(cam, i, j, width, height, rand2f(rng), rand2f(rng));
@@ -5262,9 +5312,10 @@ std::vector<rng_state> make_trace_rngs(int width, int height, uint64_t seed) {
 }
 
 // Progressively compute an image by calling trace_samples multiple times.
-image4f trace_image(const scene* scn, const camera* cam, int yresolution,
-    int nsamples, trace_func tracer, int nbounces, float pixel_clamp,
-    bool noparallel, int seed) {
+image4f trace_image(const std::shared_ptr<scene>& scn,
+    const std::shared_ptr<camera>& cam, int yresolution, int nsamples,
+    trace_func tracer, int nbounces, float pixel_clamp, bool noparallel,
+    int seed) {
     auto width = image_width(cam, yresolution);
     auto height = image_height(cam, yresolution);
 
@@ -5276,7 +5327,7 @@ image4f trace_image(const scene* scn, const camera* cam, int yresolution,
             for (auto i = 0; i < width; i++) {
                 for (auto s = 0; s < nsamples; s++)
                     img.at(i, j) += trace_sample(scn, cam, i, j, width, height,
-                                                 rng[j * width + i], tracer, nbounces, pixel_clamp);
+                        rng[j * width + i], tracer, nbounces, pixel_clamp);
                 img.at(i, j) /= nsamples;
             }
         }
@@ -5289,7 +5340,7 @@ image4f trace_image(const scene* scn, const camera* cam, int yresolution,
                     for (auto i = 0; i < width; i++) {
                         for (auto s = 0; s < nsamples; s++)
                             img.at(i, j) += trace_sample(scn, cam, i, j, width,
-                                                         height, rng[j * width + i], tracer, nbounces,
+                                height, rng[j * width + i], tracer, nbounces,
                                 pixel_clamp);
                         img.at(i, j) /= nsamples;
                     }
@@ -5302,17 +5353,18 @@ image4f trace_image(const scene* scn, const camera* cam, int yresolution,
 }
 
 // Progressively compute an image by calling trace_samples multiple times.
-void trace_samples(const scene* scn, const camera* cam, int nsamples,
-    trace_func tracer, image4f& img, std::vector<rng_state>& rng, int sample,
-    int nbounces, float pixel_clamp, bool noparallel, int seed) {
+void trace_samples(const std::shared_ptr<scene>& scn,
+    const std::shared_ptr<camera>& cam, int nsamples, trace_func tracer,
+    image4f& img, std::vector<rng_state>& rng, int sample, int nbounces,
+    float pixel_clamp, bool noparallel, int seed) {
     if (noparallel) {
         for (auto j = 0; j < img.height; j++) {
             for (auto i = 0; i < img.width; i++) {
                 img.at(i, j) *= sample;
                 for (auto s = 0; s < nsamples; s++)
                     img.at(i, j) += trace_sample(scn, cam, i, j, img.width,
-                                                  img.height, rng.at(j * img.width + i), tracer,
-                        nbounces, pixel_clamp);
+                        img.height, rng.at(j * img.width + i), tracer, nbounces,
+                        pixel_clamp);
                 img.at(i, j) /= sample + nsamples;
             }
         }
@@ -5320,14 +5372,14 @@ void trace_samples(const scene* scn, const camera* cam, int nsamples,
         auto nthreads = std::thread::hardware_concurrency();
         auto threads = std::vector<std::thread>();
         for (auto tid = 0; tid < std::thread::hardware_concurrency(); tid++) {
-            threads.push_back(std::thread([=,&img,&rng]() {
+            threads.push_back(std::thread([=, &img, &rng]() {
                 for (auto j = tid; j < img.height; j += nthreads) {
                     for (auto i = 0; i < img.width; i++) {
                         img.at(i, j) *= sample;
                         for (auto s = 0; s < nsamples; s++)
                             img.at(i, j) +=
                                 trace_sample(scn, cam, i, j, img.width,
-                                             img.height, rng.at(j * img.width + i),
+                                    img.height, rng.at(j * img.width + i),
                                     tracer, nbounces, pixel_clamp);
                         img.at(i, j) /= sample + nsamples;
                     }
@@ -5339,11 +5391,12 @@ void trace_samples(const scene* scn, const camera* cam, int nsamples,
 }
 
 // Starts an anyncrhounous renderer.
-void trace_async_start(const scene* scn, const camera* cam, int nsamples,
-    trace_func tracer, image4f& img, image4f& display,
-    std::vector<rng_state>& rng, std::vector<std::thread>& threads, bool& stop,
-    int& sample, float& exposure, float& gamma, bool& filmic, int preview_ratio,
-    int nbounces, float pixel_clamp, int seed) {
+void trace_async_start(const std::shared_ptr<scene>& scn,
+    const std::shared_ptr<camera>& cam, int nsamples, trace_func tracer,
+    image4f& img, image4f& display, std::vector<rng_state>& rng,
+    std::vector<std::thread>& threads, bool& stop, int& sample, float& exposure,
+    float& gamma, bool& filmic, int preview_ratio, int nbounces,
+    float pixel_clamp, int seed) {
     // render preview image
     if (preview_ratio) {
         auto pimg = ygl::trace_image(scn, cam, img.height / preview_ratio, 1,
@@ -5363,25 +5416,26 @@ void trace_async_start(const scene* scn, const camera* cam, int nsamples,
     threads.clear();
     stop = false;
     for (auto tid = 0; tid < nthreads; tid++) {
-        threads.push_back(std::thread([=,&img,&display,&rng,&sample,&exposure,&gamma,&stop]() {
-            for (auto s = 0; s < nsamples; s++) {
-                if (!tid) sample = s;
-                for (auto j = tid; j < img.height; j += nthreads) {
-                    for (auto i = 0; i < img.width; i++) {
-                        if (stop) return;
-                        img.at(i, j) *= s;
-                        img.at(i, j) += trace_sample(scn, cam, i, j,
-                            img.width, img.height, rng.at(j * img.width + i), 
-                            tracer, nbounces);
-                        img.at(i, j) /= s + 1;
-                        xyz(display.at(i, j)) = tonemap_hdr(
-                            xyz(img.at(i, j)), exposure, gamma, filmic);
-                        display.at(i, j).w = img.at(i, j).w;
+        threads.push_back(std::thread(
+            [=, &img, &display, &rng, &sample, &exposure, &gamma, &stop]() {
+                for (auto s = 0; s < nsamples; s++) {
+                    if (!tid) sample = s;
+                    for (auto j = tid; j < img.height; j += nthreads) {
+                        for (auto i = 0; i < img.width; i++) {
+                            if (stop) return;
+                            img.at(i, j) *= s;
+                            img.at(i, j) += trace_sample(scn, cam, i, j,
+                                img.width, img.height,
+                                rng.at(j * img.width + i), tracer, nbounces);
+                            img.at(i, j) /= s + 1;
+                            xyz(display.at(i, j)) = tonemap_hdr(
+                                xyz(img.at(i, j)), exposure, gamma, filmic);
+                            display.at(i, j).w = img.at(i, j).w;
+                        }
                     }
                 }
-            }
-            if (!tid) sample = nsamples;
-        }));
+                if (!tid) sample = nsamples;
+            }));
     }
 }
 
