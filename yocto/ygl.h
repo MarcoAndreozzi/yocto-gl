@@ -1933,9 +1933,9 @@ struct bvh_tree {
     std::vector<vec4i> quads;      // Quads for shape BVHs.
 
     // data for instance BVH
-    std::vector<frame3f> ist_frames;      // instance frames
-    std::vector<frame3f> ist_inv_frames;  // instance inverse frames
-    std::vector<std::shared_ptr<bvh_tree>> ist_bvhs;      // instance shape bvhs
+    std::vector<frame3f> ist_frames;                  // instance frames
+    std::vector<frame3f> ist_inv_frames;              // instance inverse frames
+    std::vector<std::shared_ptr<bvh_tree>> ist_bvhs;  // instance shape bvhs
 
     // bvh nodes
     std::vector<bvh_node> nodes;  // Internal nodes.
@@ -1969,32 +1969,33 @@ bool overlap_bvh(const std::shared_ptr<bvh_tree>& bvh, const vec3f& pos,
 namespace ygl {
 #if YGL_EMBREE
 
-    // Wrapper for Intel's embree bvh that matches the calls of yocto/bvh.
-    struct bvh_embree {
-        RTCDevice device = nullptr;
-        RTCScene scene = nullptr;
-        std::vector<RTCGeometry> shapes;
-        ~bvh_embree();
-    };
-    
-    // Initialize Embree bvh.
-    std::shared_ptr<bvh_embree> make_embree_bvh();
-    
-    // Add triangle mesh.
-    void add_triangle_mesh(const std::shared_ptr<bvh_embree>& bvh, int iid, const std::vector<vec3i>& triangles, const std::vector<vec3f>& pos);
-    
-    // Build BVH.
-    void build_bvh(const std::shared_ptr<bvh_embree>& bvh);
+// Wrapper for Intel's embree bvh that matches the calls of yocto/bvh.
+struct bvh_embree {
+    RTCDevice device = nullptr;
+    RTCScene scene = nullptr;
+    std::vector<RTCGeometry> shapes;
+    ~bvh_embree();
+};
 
-    // Intersect ray with a bvh returning either the first or any intersection
-    // depending on `find_any`. Returns the ray distance `dist`, the instance
-    // id `iid`, the shape id `sid`, the shape element index `eid` and the
-    // shape barycentric coordinates `uv`.
-    bool intersect_bvh(const std::shared_ptr<bvh_embree>& bvh, const ray3f& ray,
-                       bool find_any, float& dist, int& iid, int& eid, vec2f& uv);
-    
+// Initialize Embree bvh.
+std::shared_ptr<bvh_embree> make_embree_bvh();
+
+// Add triangle mesh.
+void add_triangle_mesh(const std::shared_ptr<bvh_embree>& bvh, int iid,
+    const std::vector<vec3i>& triangles, const std::vector<vec3f>& pos);
+
+// Build BVH.
+void build_bvh(const std::shared_ptr<bvh_embree>& bvh);
+
+// Intersect ray with a bvh returning either the first or any intersection
+// depending on `find_any`. Returns the ray distance `dist`, the instance
+// id `iid`, the shape id `sid`, the shape element index `eid` and the
+// shape barycentric coordinates `uv`.
+bool intersect_bvh(const std::shared_ptr<bvh_embree>& bvh, const ray3f& ray,
+    bool find_any, float& dist, int& iid, int& eid, vec2f& uv);
+
 #endif
-}
+}  // namespace ygl
 
 // -----------------------------------------------------------------------------
 // SHAPE EXAMPLES
@@ -2483,7 +2484,7 @@ struct animation {
     std::vector<vec4f> rotation;                   // rotation keyframes
     std::vector<vec3f> scale;                      // scale keyframes
     std::vector<std::vector<float>> weights;       // mprph weight keyframes
-    std::vector<std::shared_ptr<node>> targets;                    // target nodes
+    std::vector<std::shared_ptr<node>> targets;    // target nodes
 };
 
 // Scene comprised an array of objects whose memory is owened by the scene.
@@ -2494,17 +2495,19 @@ struct animation {
 // the hierarchy. Animation is also optional, with keyframe data that
 // updates node transformations only if defined.
 struct scene {
-    std::string name;                             // name
-    std::vector<std::shared_ptr<camera>> cameras = {};            // cameras
-    std::vector<std::shared_ptr<shape>> shapes = {};              // shapes
-    std::vector<std::shared_ptr<subdiv>> subdivs = {};            // subdivs
-    std::vector<std::shared_ptr<instance>> instances = {};        // instances
-    std::vector<std::shared_ptr<material>> materials = {};        // materials
-    std::vector<std::shared_ptr<texture>> textures = {};          // textures
-    std::vector<std::shared_ptr<environment>> environments = {};  // environments
+    std::string name;                                       // name
+    std::vector<std::shared_ptr<camera>> cameras = {};      // cameras
+    std::vector<std::shared_ptr<shape>> shapes = {};        // shapes
+    std::vector<std::shared_ptr<subdiv>> subdivs = {};      // subdivs
+    std::vector<std::shared_ptr<instance>> instances = {};  // instances
+    std::vector<std::shared_ptr<material>> materials = {};  // materials
+    std::vector<std::shared_ptr<texture>> textures = {};    // textures
+    std::vector<std::shared_ptr<environment>> environments =
+        {};  // environments
 
-    std::vector<std::shared_ptr<node>> nodes = {};            // node hierarchy [optional]
-    std::vector<std::shared_ptr<animation>> animations = {};  // animations [optional]
+    std::vector<std::shared_ptr<node>> nodes = {};  // node hierarchy [optional]
+    std::vector<std::shared_ptr<animation>> animations =
+        {};  // animations [optional]
 
     // compute properties
     std::vector<std::shared_ptr<instance>> lights;

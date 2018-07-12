@@ -75,8 +75,9 @@ struct app_state {
     bool animate = false;
 };
 
-void draw_glscene(const std::shared_ptr<ygl::scene>& scn, const std::shared_ptr<ygl::camera>& cam,
-    unsigned int prog, const ygl::vec2i& viewport_size, const std::shared_ptr<void>& highlighted,
+void draw_glscene(const std::shared_ptr<ygl::scene>& scn,
+    const std::shared_ptr<ygl::camera>& cam, unsigned int prog,
+    const ygl::vec2i& viewport_size, const std::shared_ptr<void>& highlighted,
     bool eyelight, bool wireframe, bool edges, float exposure, float gamma);
 
 // draw with shading
@@ -489,15 +490,16 @@ static const char* fragment =
 #endif
 
 // Draw a shape
-void draw_glshape(const std::shared_ptr<ygl::shape>& shp, const std::shared_ptr<ygl::material>& mat,
-    const ygl::mat4f& xform, bool highlighted, unsigned int prog, bool eyelight,
-    bool edges) {
+void draw_glshape(const std::shared_ptr<ygl::shape>& shp,
+    const std::shared_ptr<ygl::material>& mat, const ygl::mat4f& xform,
+    bool highlighted, unsigned int prog, bool eyelight, bool edges) {
     glUniformMatrix4fv(
         glGetUniformLocation(prog, "shape_xform"), 1, false, &xform.x.x);
     glUniform1f(glGetUniformLocation(prog, "shape_normal_offset"), 0.0f);
 
     auto uniform_texture = [](auto& prog, const char* name, const char* name_on,
-                              const std::shared_ptr<ygl::texture>& txt, int unit) {
+                               const std::shared_ptr<ygl::texture>& txt,
+                               int unit) {
         if (txt) {
             glActiveTexture(GL_TEXTURE0 + unit);
             glBindTexture(GL_TEXTURE_2D, txt->gl_txt);
@@ -610,8 +612,9 @@ void draw_glshape(const std::shared_ptr<ygl::shape>& shp, const std::shared_ptr<
 }
 
 // Display a scene
-void draw_glscene(const std::shared_ptr<ygl::scene>& scn, const std::shared_ptr<ygl::camera>& cam,
-    unsigned int prog, const ygl::vec2i& viewport_size, const std::shared_ptr<void>& highlighted,
+void draw_glscene(const std::shared_ptr<ygl::scene>& scn,
+    const std::shared_ptr<ygl::camera>& cam, unsigned int prog,
+    const ygl::vec2i& viewport_size, const std::shared_ptr<void>& highlighted,
     bool eyelight, bool wireframe, bool edges, float exposure, float gamma) {
     glViewport(0, 0, viewport_size.x, viewport_size.y);
 

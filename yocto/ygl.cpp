@@ -1890,94 +1890,94 @@ bool overlap_bvh(const std::shared_ptr<bvh_tree>& bvh, const vec3f& pos,
 namespace ygl {
 #if YGL_EMBREE
 
-    bvh_embree::~bvh_embree() {
-        for(auto shp : shapes) rtcReleaseGeometry(shp);
-        if(scene) rtcReleaseScene(scene);
-        if(device) rtcReleaseDevice(device);
+bvh_embree::~bvh_embree() {
+    for (auto shp : shapes) rtcReleaseGeometry(shp);
+    if (scene) rtcReleaseScene(scene);
+    if (device) rtcReleaseDevice(device);
+}
+
+void embree_error(void* ctx, RTCError code, const char* str) {
+    switch (code) {
+        case RTC_ERROR_UNKNOWN: printf("RTC_ERROR_UNKNOWN"); break;
+        case RTC_ERROR_INVALID_ARGUMENT:
+            printf("RTC_ERROR_INVALID_ARGUMENT");
+            break;
+        case RTC_ERROR_INVALID_OPERATION:
+            printf("RTC_ERROR_INVALID_OPERATION");
+            break;
+        case RTC_ERROR_OUT_OF_MEMORY: printf("RTC_ERROR_OUT_OF_MEMORY"); break;
+        case RTC_ERROR_UNSUPPORTED_CPU:
+            printf("RTC_ERROR_UNSUPPORTED_CPU");
+            break;
+        case RTC_ERROR_CANCELLED: printf("RTC_ERROR_CANCELLED"); break;
+        default: printf("invalid error code"); break;
     }
-    
-    void embree_error(void* ctx, RTCError code,
-                      const char* str) {
-        switch (code) {
-            case RTC_ERROR_UNKNOWN: printf("RTC_ERROR_UNKNOWN"); break;
-            case RTC_ERROR_INVALID_ARGUMENT:
-                printf("RTC_ERROR_INVALID_ARGUMENT");
-                break;
-            case RTC_ERROR_INVALID_OPERATION:
-                printf("RTC_ERROR_INVALID_OPERATION");
-                break;
-            case RTC_ERROR_OUT_OF_MEMORY: printf("RTC_ERROR_OUT_OF_MEMORY"); break;
-            case RTC_ERROR_UNSUPPORTED_CPU:
-                printf("RTC_ERROR_UNSUPPORTED_CPU");
-                break;
-            case RTC_ERROR_CANCELLED: printf("RTC_ERROR_CANCELLED"); break;
-            default: printf("invalid error code"); break;
-        }
-        printf("%s", str);
-    }
-    
-    // Initialize Embree bvh.
-    std::shared_ptr<bvh_embree> make_embree_bvh() {
-        auto bvh = std::make_shared<bvh_embree>();
-        bvh = std::make_shared<bvh_embree>();
-        bvh->device = rtcNewDevice("");
-        rtcSetDeviceErrorFunction(bvh->device, embree_error, nullptr);
-        bvh->scene = rtcNewScene(bvh->device);
-        return bvh;
-    }
-    
-    // Add triangle mesh.
-    void add_shape(const std::shared_ptr<bvh_embree>& bvh, int iid, const std::vector<vec3i>& triangles, const std::vector<vec3f>& pos) {
-        auto shp = rtcNewGeometry(bvh->device, RTC_GEOMETRY_TYPE_TRIANGLE);
-            rtcSetGeometryVertexAttributeCount(shp, 1);
-            auto epos = rtcSetNewGeometryBuffer(shp, RTC_BUFFER_TYPE_VERTEX, 0,
-                                                RTC_FORMAT_FLOAT3, 3 * 4, pos.size());
-            auto etriangles = rtcSetNewGeometryBuffer(shp, RTC_BUFFER_TYPE_INDEX, 0,
-                                                     RTC_FORMAT_UINT3, 3 * 4, triangles.size());
-            memcpy(epos, pos.data(), pos.size() * 12);
-            memcpy(etriangles, triangles.data(), triangles.size() * 12);
-            rtcCommitGeometry(shp);
-            rtcAttachGeometryByID(bvh->scene, shp, iid);
-            bvh->shapes.push_back(shp);
-    }
-    
-    // Build BVH.
-    void build_bvh(const std::shared_ptr<bvh_embree>& bvh) {
-        rtcCommitScene(bvh->scene);
-    }
-    
-    // Intersect ray with a bvh returning either the first or any intersection
-    // depending on `find_any`. Returns the ray distance `dist`, the instance
-    // id `iid`, the shape id `sid`, the shape element index `eid` and the
-    // shape barycentric coordinates `uv`.
-    bool intersect_bvh(const std::shared_ptr<bvh_embree>& bvh, const ray3f& ray,
-                       bool find_any, float& dist, int& iid, int& eid, vec2f& uv) {
-            RTCRayHit embree_ray;
-            embree_ray.ray.org_x = ray.o.x;
-            embree_ray.ray.org_y = ray.o.y;
-            embree_ray.ray.org_z = ray.o.z;
-            embree_ray.ray.dir_x = ray.d.x;
-            embree_ray.ray.dir_y = ray.d.y;
-            embree_ray.ray.dir_z = ray.d.z;
-            embree_ray.ray.tnear = ray.tmin;
-            embree_ray.ray.tfar = ray.tmax;
-            embree_ray.ray.flags = 0;
-            embree_ray.hit.geomID = RTC_INVALID_GEOMETRY_ID;
-            embree_ray.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
-            RTCIntersectContext embree_ctx;
-            rtcInitIntersectContext(&embree_ctx);
-            rtcIntersect1((RTCScene)bvh->scene, &embree_ctx, &embree_ray);
-            if (embree_ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) return false;
-            auto isec = scene_intersection{};
-            dist = embree_ray.ray.tfar;
-            uv = {embree_ray.hit.u, embree_ray.hit.v};
-            eid = embree_ray.hit.primID;
-            iid = embree_ray.hit.geomID;
-            return true;
-    }
+    printf("%s", str);
+}
+
+// Initialize Embree bvh.
+std::shared_ptr<bvh_embree> make_embree_bvh() {
+    auto bvh = std::make_shared<bvh_embree>();
+    bvh = std::make_shared<bvh_embree>();
+    bvh->device = rtcNewDevice("");
+    rtcSetDeviceErrorFunction(bvh->device, embree_error, nullptr);
+    bvh->scene = rtcNewScene(bvh->device);
+    return bvh;
+}
+
+// Add triangle mesh.
+void add_shape(const std::shared_ptr<bvh_embree>& bvh, int iid,
+    const std::vector<vec3i>& triangles, const std::vector<vec3f>& pos) {
+    auto shp = rtcNewGeometry(bvh->device, RTC_GEOMETRY_TYPE_TRIANGLE);
+    rtcSetGeometryVertexAttributeCount(shp, 1);
+    auto epos = rtcSetNewGeometryBuffer(
+        shp, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, 3 * 4, pos.size());
+    auto etriangles = rtcSetNewGeometryBuffer(shp, RTC_BUFFER_TYPE_INDEX, 0,
+        RTC_FORMAT_UINT3, 3 * 4, triangles.size());
+    memcpy(epos, pos.data(), pos.size() * 12);
+    memcpy(etriangles, triangles.data(), triangles.size() * 12);
+    rtcCommitGeometry(shp);
+    rtcAttachGeometryByID(bvh->scene, shp, iid);
+    bvh->shapes.push_back(shp);
+}
+
+// Build BVH.
+void build_bvh(const std::shared_ptr<bvh_embree>& bvh) {
+    rtcCommitScene(bvh->scene);
+}
+
+// Intersect ray with a bvh returning either the first or any intersection
+// depending on `find_any`. Returns the ray distance `dist`, the instance
+// id `iid`, the shape id `sid`, the shape element index `eid` and the
+// shape barycentric coordinates `uv`.
+bool intersect_bvh(const std::shared_ptr<bvh_embree>& bvh, const ray3f& ray,
+    bool find_any, float& dist, int& iid, int& eid, vec2f& uv) {
+    RTCRayHit embree_ray;
+    embree_ray.ray.org_x = ray.o.x;
+    embree_ray.ray.org_y = ray.o.y;
+    embree_ray.ray.org_z = ray.o.z;
+    embree_ray.ray.dir_x = ray.d.x;
+    embree_ray.ray.dir_y = ray.d.y;
+    embree_ray.ray.dir_z = ray.d.z;
+    embree_ray.ray.tnear = ray.tmin;
+    embree_ray.ray.tfar = ray.tmax;
+    embree_ray.ray.flags = 0;
+    embree_ray.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+    embree_ray.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
+    RTCIntersectContext embree_ctx;
+    rtcInitIntersectContext(&embree_ctx);
+    rtcIntersect1((RTCScene)bvh->scene, &embree_ctx, &embree_ray);
+    if (embree_ray.hit.geomID == RTC_INVALID_GEOMETRY_ID) return false;
+    auto isec = scene_intersection{};
+    dist = embree_ray.ray.tfar;
+    uv = {embree_ray.hit.u, embree_ray.hit.v};
+    eid = embree_ray.hit.primID;
+    iid = embree_ray.hit.geomID;
+    return true;
+}
 
 #endif
-}
+}  // namespace ygl
 
 // -----------------------------------------------------------------------------
 // IMPLEMENTATION OF SHAPE EXAMPLES
@@ -3814,12 +3814,13 @@ std::vector<std::string> validate(
                 errs.push_back("duplicated " + base + " name " + kv.first);
         }
     };
-    auto check_empty_textures = [&errs](const std::vector<std::shared_ptr<texture>>& vals) {
-        for (auto val : vals) {
-            if (val->img.pxl.empty())
-                errs.push_back("empty texture " + val->name);
-        }
-    };
+    auto check_empty_textures =
+        [&errs](const std::vector<std::shared_ptr<texture>>& vals) {
+            for (auto val : vals) {
+                if (val->img.pxl.empty())
+                    errs.push_back("empty texture " + val->name);
+            }
+        };
 
     check_names(scn->cameras, "camera");
     check_names(scn->shapes, "shape");
@@ -3869,7 +3870,7 @@ scene_intersection intersect_ray_embree(
     auto iid = 0;
     auto isec = scene_intersection();
     if (!intersect_bvh(
-                       scn->embree_bvh, ray, find_any, isec.dist, iid, isec.ei, isec.uv))
+            scn->embree_bvh, ray, find_any, isec.dist, iid, isec.ei, isec.uv))
         return {};
     isec.ist = scn->instances[iid];
     return isec;

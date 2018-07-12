@@ -1639,7 +1639,7 @@ void to_json(json& js, const scene& val) {
         for (auto v : val.animations) js["animations"].push_back(*v);
     }
 }
-    void to_json(json& js, const std::shared_ptr<scene>& val) {
+void to_json(json& js, const std::shared_ptr<scene>& val) {
     if (!val) {
         js = json();
         return;
@@ -1648,7 +1648,7 @@ void to_json(json& js, const scene& val) {
 }
 
 template <typename T>
-    static std::unordered_map<std::string, std::shared_ptr<T>> make_named_map(
+static std::unordered_map<std::string, std::shared_ptr<T>> make_named_map(
     const std::vector<std::shared_ptr<T>>& elems) {
     auto map = std::unordered_map<std::string, std::shared_ptr<T>>();
     for (auto elem : elems) map[elem->name] = elem;
@@ -2394,7 +2394,8 @@ std::shared_ptr<scene> load_obj_scene(const std::string& filename,
             return true;
         }
     };
-    auto add_instance = [&](const std::shared_ptr<scene>& scn, const std::string& objname,
+    auto add_instance = [&](const std::shared_ptr<scene>& scn,
+                            const std::string& objname,
                             const std::string& matname,
                             const std::string& groupname, bool smoothing) {
         if (scn->instances.empty() || objname != scn->instances.back()->name ||
@@ -2924,7 +2925,8 @@ std::shared_ptr<scene> load_gltf_scene(
     }
 
     // add a texture
-    auto add_texture = [scn, &gltf](const json& ginfo, bool srgb) ->std::shared_ptr<texture> {
+    auto add_texture = [scn, &gltf](const json& ginfo,
+                           bool srgb) -> std::shared_ptr<texture> {
         if (!gltf.count("images") || !gltf.count("textures")) return nullptr;
         if (ginfo.is_null() || ginfo.empty()) return nullptr;
         if (ginfo.value("index", -1) < 0) return nullptr;
@@ -3050,7 +3052,8 @@ std::shared_ptr<scene> load_gltf_scene(
     };
 
     // convert meshes
-    auto meshes = std::vector<std::vector<std::pair<std::shared_ptr<shape>, std::shared_ptr<material>>>>();
+    auto meshes = std::vector<std::vector<
+        std::pair<std::shared_ptr<shape>, std::shared_ptr<material>>>>();
     if (gltf.count("meshes")) {
         for (auto mid = 0; mid < gltf.at("meshes").size(); mid++) {
             auto& gmesh = gltf.at("meshes").at(mid);
@@ -3612,7 +3615,8 @@ void save_gltf_scene(const std::string& filename,
         if (nde->ist) njs["mesh"] = smap.at(nde->ist->shp);
         if (!nde->children.empty()) {
             njs["children"] = json::array();
-            for (auto& c : nde->children) njs["children"].push_back(nmap.at(c.lock()));
+            for (auto& c : nde->children)
+                njs["children"].push_back(nmap.at(c.lock()));
         }
         js["nodes"].push_back(njs);
         nmap[nde] = (int)js["nodes"].size() - 1;
@@ -3947,7 +3951,8 @@ std::shared_ptr<scene> load_pbrt_scene(
     };
 
     auto get_scaled_texture =
-        [&txt_map, &get_vec3f](const json& js) -> std::pair<vec3f, std::shared_ptr<texture>> {
+        [&txt_map, &get_vec3f](
+            const json& js) -> std::pair<vec3f, std::shared_ptr<texture>> {
         if (js.is_string())
             return {{1, 1, 1}, txt_map.at(js.get<std::string>())};
         return {get_vec3f(js), nullptr};
